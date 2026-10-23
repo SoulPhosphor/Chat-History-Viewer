@@ -1,0 +1,285 @@
+/* ── Settings page: setting rows + switches ────────────────────────────────
+   Every visual value here comes from the CSS variables declared on :root in
+   theme.css, so the whole look rethemes from one place. This file loads after
+   style.css; a few #settings-content-scoped overrides replace rules that only
+   applied to the old settings markup. */
+
+/* Section boxes: keep the title plus its settings together, with consistent
+   spacing between category boxes. */
+#settings-content .settings-section + .settings-section {
+  margin-top: var(--settings-section-gap);
+}
+#settings-content .settings-section-title {
+  margin: 0 0 var(--settings-section-title-gap);
+}
+
+/* One setting row: text on the left, switch pinned to the right edge of the
+   box. The text block keeps a preferred minimum width so every switch on the page
+   starts at the same place regardless of its label's length. A title-only
+   setting centers its switch on the title line; a title + subtext setting
+   centers it across the whole text block. */
+.settings-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--settings-setting-gap);
+}
+.settings-setting + .settings-setting {
+  margin-top: var(--settings-setting-gap-y);
+}
+.settings-setting-text {
+  flex: 0 1 auto;
+  min-width: min(var(--settings-text-min-width), calc(100% - var(--switch-width) - var(--settings-setting-gap)));
+}
+.settings-setting-title {
+  display: block;
+  font-weight: var(--settings-setting-title-weight);
+  color: var(--text);
+  cursor: pointer;
+}
+.settings-setting-subtext {
+  margin: var(--settings-setting-subtext-gap) 0 0;
+  color: var(--settings-setting-subtext-color);
+  font-size: var(--settings-setting-subtext-size);
+}
+
+.settings-sidebar-width-setting {
+  align-items: flex-start;
+  flex-direction: column;
+  padding-bottom: var(--settings-setting-gap-y);
+  border-bottom: var(--stroke-1px) solid var(--border);
+}
+
+.settings-sidebar-width-control {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--settings-setting-gap);
+}
+
+#setting-sidebar-width {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.settings-pixel-input {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3px);
+  color: var(--muted);
+  font-size: var(--settings-setting-subtext-size);
+}
+
+#setting-sidebar-width-number {
+  width: var(--setting-sidebar-width-number-width);
+  padding: var(--space-5px) var(--space-7px);
+  border: var(--stroke-1px) solid var(--border);
+  border-radius: var(--radius-6px);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  text-align: right;
+}
+
+/* ── Switch control ────────────────────────────────────────────────────────
+   The native checkbox is the semantic control (keyboard, focus, form state,
+   role="switch" in the markup); the track/thumb pair draws the requested
+   oval-and-circle switch entirely with CSS. The thumb rides inside the track,
+   left = off, right = on, with inner shading for depth. */
+.settings-switch {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.settings-switch input {
+  position: absolute;
+  width: var(--size-1px);
+  height: var(--size-1px);
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.settings-switch .settings-switch-track {
+  display: inline-flex;
+  align-items: center;
+  width: var(--switch-width);
+  height: var(--switch-height);
+  padding: var(--switch-padding);
+  box-sizing: border-box;
+  border-radius: var(--switch-radius);
+  background: var(--switch-off-bg);
+  border-width: var(--switch-border-width);
+  border-style: solid;
+  border-color: var(--switch-off-border);
+  box-shadow: var(--switch-track-shadow);
+  transition:
+    background var(--switch-transition),
+    border-color var(--switch-transition);
+}
+.settings-switch .settings-switch-thumb {
+  width: var(--switch-thumb-size);
+  height: var(--switch-thumb-size);
+  border-radius: var(--switch-radius);
+  background: var(--switch-thumb-off-color);
+  box-shadow: var(--switch-thumb-shadow);
+  transform: translateX(0);
+  transition: transform var(--switch-transition);
+}
+.settings-switch input:checked + .settings-switch-track {
+  background: var(--switch-on-bg);
+  border-color: var(--switch-on-border);
+}
+.settings-switch input:checked + .settings-switch-track .settings-switch-thumb {
+  transform: translateX(
+    calc(
+      var(--switch-width) - var(--switch-thumb-size) -
+        2 * var(--switch-padding) - 2 * var(--switch-border-width)
+    )
+  );
+  background: var(--switch-thumb-color);
+}
+
+/* ── Chat-header label placement ─────────────────────────────────────────── */
+/* "Show Labels in Chat Header" on: the header squares sit on their own line
+   under the title, starting where the title does. Off: the holder stays empty
+   and the :empty rule in style.css collapses it, so no blank line appears and
+   the header keeps its current layout. */
+#thread-title-square {
+  display: block;
+  margin: var(--header-label-row-gap) 0 0 var(--thread-title-square-margin);
+}
+#thread-title-square .label-indicator {
+  margin-right: 0;
+  flex-wrap: wrap;
+}
+
+/* ── About page + updater ───────────────────────────────────────────────── */
+#about-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#about-panel[hidden] {
+  display: none;
+}
+#about-content {
+  flex: 1;
+  padding: var(--about-content-padding);
+  overflow-y: auto;
+}
+.about-update-row,
+.update-status {
+  display: flex;
+  align-items: center;
+}
+.about-update-row {
+  gap: var(--about-update-gap);
+}
+.about-btn {
+  flex-shrink: 0;
+  padding: var(--about-button-padding);
+  border: var(--stroke-1px) solid var(--about-button-border);
+  border-radius: var(--about-button-radius);
+  background: var(--about-button-bg);
+  color: var(--about-button-color);
+  font: inherit;
+  cursor: pointer;
+}
+.about-btn:disabled {
+  opacity: var(--about-button-disabled-opacity);
+  cursor: default;
+}
+.about-btn[hidden] {
+  display: none;
+}
+.about-btn-secondary {
+  border-color: var(--about-button-secondary-border);
+  background: var(--about-button-secondary-bg);
+  color: var(--about-button-secondary-color);
+}
+.about-version {
+  margin: var(--about-version-margin);
+  color: var(--about-version-color);
+  font-size: var(--about-version-size);
+}
+.update-details,
+.update-backup {
+  margin-top: var(--update-section-gap);
+  padding: var(--update-section-padding);
+  border: var(--stroke-1px) solid var(--update-section-border);
+  border-radius: var(--update-section-radius);
+  max-width: var(--update-section-max-width);
+}
+.update-details[hidden],
+.update-backup[hidden],
+.update-local-edits[hidden],
+.update-file-list[hidden] {
+  display: none;
+}
+.update-details-title {
+  margin: var(--update-title-margin);
+  font-size: var(--update-title-size);
+}
+.update-details-summary {
+  margin: var(--update-summary-margin);
+  color: var(--update-status-color);
+  font-size: var(--update-status-size);
+}
+.update-local-edits {
+  margin: var(--update-summary-margin);
+  color: var(--update-warning-color);
+  font-size: var(--update-status-size);
+}
+.update-local-edits p {
+  margin: 0;
+}
+.update-file-list {
+  margin: var(--update-file-list-margin);
+  font-family: var(--font-identifier);
+}
+.update-changes {
+  margin: var(--update-summary-margin);
+  max-height: var(--update-changes-max-height);
+  overflow-y: auto;
+}
+.update-change-title {
+  margin: var(--update-change-title-margin);
+  font-size: var(--update-change-title-size);
+}
+.update-change-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: var(--update-status-size);
+}
+.update-status {
+  gap: var(--update-status-gap);
+  color: var(--update-status-color);
+  font-size: var(--update-status-size);
+}
+.update-status-error {
+  color: var(--update-error-color);
+}
+.update-spinner {
+  width: var(--update-spinner-size);
+  height: var(--update-spinner-size);
+  box-sizing: border-box;
+  border: var(--update-spinner-width) solid var(--update-spinner-track);
+  border-top-color: var(--update-spinner-accent);
+  border-radius: 50%;
+  animation: update-spin var(--update-spinner-speed) linear infinite;
+}
+@keyframes update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Folder rows are wrapping flex rows: the snippet takes its own full line
+   under the title, the way the main list shows it. Rendered only when the
+   Show Chat Snippet setting is on; nothing is emitted when it is off. */
+.folder-conv-item > .conv-snippet {
+  flex-basis: 100%;
+  margin: 0;
+}

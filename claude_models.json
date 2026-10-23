@@ -1,0 +1,150 @@
+{
+  "note": "Seed list of Claude models shown in claude.ai, one row per availability period. End dates are consumer claude.ai selector removal/replacement dates, not API retirement dates. Imported once into userdata.db on first run; after that the database is the source of truth and this file is not re-read. Each model's id is the same on every install; Reload Model Data matches models by it, so renaming a model never makes a copy.",
+  "interval_semantics": "[start_date, end_date) - end_date is exclusive; null means still available",
+  "models": [
+    {
+      "id": "claude-fable-5-1",
+      "name": "Claude Fable 5.1",
+      "start_date": "2026-09-01",
+      "end_date": null
+    },
+    {
+      "id": "claude-opus-5",
+      "name": "Claude Opus 5",
+      "start_date": "2026-07-24",
+      "end_date": null
+    },
+    {
+      "id": "claude-sonnet-5",
+      "name": "Claude Sonnet 5",
+      "start_date": "2026-06-30",
+      "end_date": null
+    },
+    {
+      "id": "claude-fable-5",
+      "name": "Claude Fable 5",
+      "start_date": "2026-07-01",
+      "end_date": null
+    },
+    {
+      "id": "claude-fable-5",
+      "name": "Claude Fable 5",
+      "start_date": "2026-06-09",
+      "end_date": "2026-06-12"
+    },
+    {
+      "id": "claude-opus-4-8",
+      "name": "Claude Opus 4.8",
+      "start_date": "2026-05-28",
+      "end_date": null
+    },
+    {
+      "id": "claude-opus-4-7",
+      "name": "Claude Opus 4.7",
+      "start_date": "2026-04-16",
+      "end_date": null
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "name": "Claude Sonnet 4.6",
+      "start_date": "2026-02-17",
+      "end_date": null
+    },
+    {
+      "id": "claude-opus-4-6",
+      "name": "Claude Opus 4.6",
+      "start_date": "2026-02-05",
+      "end_date": null
+    },
+    {
+      "id": "claude-opus-4-5",
+      "name": "Claude Opus 4.5",
+      "start_date": "2025-11-24",
+      "end_date": "2026-04-16"
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "name": "Claude Haiku 4.5",
+      "start_date": "2025-10-15",
+      "end_date": null
+    },
+    {
+      "id": "claude-sonnet-4-5",
+      "name": "Claude Sonnet 4.5",
+      "start_date": "2025-09-29",
+      "end_date": "2026-05-26"
+    },
+    {
+      "id": "claude-opus-4-1",
+      "name": "Claude Opus 4.1",
+      "start_date": "2025-08-05",
+      "end_date": "2026-01-16"
+    },
+    {
+      "id": "claude-sonnet-4",
+      "name": "Claude Sonnet 4",
+      "start_date": "2025-05-22",
+      "end_date": "2026-02-17"
+    },
+    {
+      "id": "claude-opus-4",
+      "name": "Claude Opus 4",
+      "start_date": "2025-05-22",
+      "end_date": "2026-01-16"
+    },
+    {
+      "id": "claude-3-7-sonnet",
+      "name": "Claude 3.7 Sonnet",
+      "start_date": "2025-02-24",
+      "end_date": "2025-11-14"
+    },
+    {
+      "id": "claude-sonnet-3-5-october-revision",
+      "name": "Claude Sonnet 3.5 October Revision",
+      "start_date": "2024-10-22",
+      "end_date": "2025-02-24"
+    },
+    {
+      "id": "claude-sonnet-3-5-june-revision",
+      "name": "Claude Sonnet 3.5 June Revision",
+      "start_date": "2024-06-21",
+      "end_date": "2024-10-22"
+    },
+    {
+      "id": "golden-gate-claude",
+      "name": "Golden Gate Claude",
+      "start_date": "2024-05-23",
+      "end_date": "2024-05-24"
+    },
+    {
+      "id": "claude-3-haiku",
+      "name": "Claude 3 Haiku",
+      "start_date": "2024-03-13",
+      "end_date": "2025-10-15"
+    },
+    {
+      "id": "claude-3-sonnet",
+      "name": "Claude 3 Sonnet",
+      "start_date": "2024-03-04",
+      "end_date": "2024-06-21"
+    },
+    {
+      "id": "claude-3-opus",
+      "name": "Claude 3 Opus",
+      "start_date": "2024-03-04",
+      "end_date": "2025-05-22"
+    },
+    {
+      "id": "claude-2-1",
+      "name": "Claude 2.1",
+      "start_date": "2023-11-21",
+      "end_date": "2024-03-04"
+    },
+    {
+      "id": "claude-2",
+      "name": "Claude 2",
+      "start_date": "2023-07-11",
+      "end_date": "2023-11-21"
+    }
+  ]
+}

@@ -1,0 +1,1949 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Claude History</title>
+    <!-- All app theme values live in theme.css; component rules load after it. -->
+    <link rel="stylesheet" href="/static/theme.css" />
+    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/settings.css" />
+    <link rel="stylesheet" href="/static/advanced_search.css" />
+    <link rel="stylesheet" href="/static/scratchpads.css" />
+    <link rel="stylesheet" href="/static/vendor/katex/katex.min.css" />
+  </head>
+
+  <body>
+    <div id="app">
+      <aside id="advanced-search-panel" aria-label="Advanced search filters" hidden>
+        <div class="advanced-search-header">
+          <div class="advanced-search-title-row">
+            <h2 id="advanced-search-heading">Advanced Search</h2>
+            <div class="advanced-search-header-actions">
+              <button type="button" id="advanced-clear-all">Clear All</button>
+              <button type="button" id="advanced-save-search">Save Search</button>
+              <button type="button" id="advanced-close" class="advanced-icon-button" title="Close advanced search" aria-label="Close advanced search">
+                <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z" /></svg>
+              </button>
+            </div>
+          </div>
+          <div class="advanced-query-pill">
+            <input id="advanced-query" aria-label="Search conversations" type="search" placeholder="Search conversations…" autocomplete="off" spellcheck="false" />
+            <button type="button" id="advanced-query-clear" class="advanced-query-clear" title="Clear search text" aria-label="Clear search text" hidden>
+              <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z" /></svg>
+            </button>
+            <button type="button" id="advanced-query-submit" class="advanced-query-submit" title="Search" aria-label="Run advanced search">
+              <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-400q75 0 127.5-52.5T560-580q0-75-52.5-127.5T380-760q-75 0-127.5 52.5T200-580q0 75 52.5 127.5T380-400Z" /></svg>
+            </button>
+          </div>
+          <div id="advanced-text-controls" class="advanced-text-controls" role="group" aria-label="Word matching">
+            <button type="button" data-text-mode="all" aria-pressed="true">All Words</button>
+            <button type="button" data-text-mode="any" aria-pressed="false">Any Word</button>
+            <button type="button" data-text-mode="exact" aria-pressed="false">Exact Phrase</button>
+            <button type="button" data-whole-words aria-pressed="false">Whole Words</button>
+          </div>
+        </div>
+        <div id="advanced-filter-content" class="advanced-filter-content"></div>
+        <div class="advanced-search-history">
+          <section>
+            <h3>Recent Searches</h3>
+            <div id="advanced-recent-list" class="advanced-history-list advanced-recent-list"></div>
+          </section>
+          <section>
+            <h3><svg class="advanced-filter-icon" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 1.75h7a1.25 1.25 0 011.25 1.25v9.33a.63.63 0 01-.95.54L7 10l-3.8 2.87a.63.63 0 01-.95-.54V3A1.25 1.25 0 013.5 1.75z" stroke="currentColor" stroke-width="1.2"/></svg>Saved Searches</h3>
+            <div id="advanced-saved-list" class="advanced-history-list advanced-saved-list"></div>
+          </section>
+        </div>
+      </aside>
+      <aside id="sidebar" aria-label="Conversations">
+        <!-- Temporary bookmark panel (shown for 5+ bookmarks). While open it
+             covers the normal sidebar; closing it reveals the sidebar again.
+             Not remembered across sessions. -->
+        <div id="bookmark-panel" class="bookmark-panel" hidden>
+          <div class="bookmark-panel-top">
+            <button
+              id="bookmark-panel-close"
+              class="bookmark-panel-close"
+              type="button"
+              title="Close bookmarks"
+              aria-label="Close bookmarks"
+            >
+              ✕
+            </button>
+          </div>
+          <div class="bookmark-panel-title">Bookmarks</div>
+          <div class="bookmark-panel-list" id="bookmark-panel-list"></div>
+        </div>
+        <!-- Editable conversation Notes temporarily replace the normal sidebar.
+             The opening-state baselines live in notes.js for the current visit. -->
+        <div id="notes-side-panel" class="notes-side-panel" hidden>
+          <div class="notes-side-panel-top">
+            <h2 class="notes-side-panel-title">Notes</h2>
+            <button
+              id="notes-side-panel-close"
+              class="notes-side-panel-close"
+              type="button"
+              title="Close notes"
+              aria-label="Close notes panel"
+            >✕</button>
+          </div>
+          <div id="notes-side-save-status" class="notes-side-save-status" role="status" hidden>
+            <span class="notes-side-save-message"></span>
+            <button id="notes-side-save-retry" type="button">Retry save</button>
+          </div>
+          <div class="notes-side-panel-content">
+            <section class="notes-side-section" data-note-section="user_notes">
+              <div class="notes-side-heading-row">
+                <label for="notes-side-user-notes">User Notes</label>
+                <button type="button" class="notes-side-revert" data-note-field="user_notes">Revert to Last Opened State</button>
+              </div>
+              <textarea id="notes-side-user-notes" data-note-field="user_notes"></textarea>
+            </section>
+            <section class="notes-side-section" data-note-section="notes_to_ai">
+              <div class="notes-side-heading-row">
+                <label for="notes-side-to-ai">Notes to the AI</label>
+                <button type="button" class="notes-side-revert" data-note-field="notes_to_ai">Revert to Last Opened State</button>
+              </div>
+              <textarea id="notes-side-to-ai" data-note-field="notes_to_ai"></textarea>
+            </section>
+            <section class="notes-side-section" data-note-section="notes_from_ai">
+              <div class="notes-side-heading-row">
+                <label for="notes-side-from-ai">Notes from the AI</label>
+                <button type="button" class="notes-side-revert" data-note-field="notes_from_ai">Revert to Last Opened State</button>
+              </div>
+              <textarea id="notes-side-from-ai" data-note-field="notes_from_ai"></textarea>
+            </section>
+          </div>
+        </div>
+        <!-- Related Conversations temporarily covers the normal sidebar, like
+             Notes. During Find Related Conversations it stays here beside
+             Advanced Search. Behaviour lives in related.js. -->
+        <!-- Scratch Pads workspace sidebar (scratchpads.js). While Scratch Pads
+             is open it takes the conversation list's place above the footer;
+             the list keeps its width, scroll position and collapse state. -->
+        <nav id="scratchpad-sidebar" class="scratchpad-sidebar" aria-labelledby="scratchpad-sidebar-title" hidden>
+          <div class="scratchpad-sidebar-top">
+            <h2 class="scratchpad-sidebar-title" id="scratchpad-sidebar-title">Scratch Pads</h2>
+            <button type="button" id="scratchpad-close-btn" class="scratchpad-icon-btn" title="Back to conversations" aria-label="Close Scratch Pads and go back to conversations">
+              <!-- Google Material Symbols: close -->
+              <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/></svg>
+            </button>
+          </div>
+          <button type="button" id="scratchpad-new-btn" class="scratchpad-new-btn">
+            <!-- Google Material Symbols: add -->
+            <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z"/></svg>
+            <span>New Scratch Pad</span>
+          </button>
+          <div class="scratchpad-search-wrap">
+            <svg class="scratchpad-search-icon" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-400q75 0 127.5-52.5T560-580q0-75-52.5-127.5T380-760q-75 0-127.5 52.5T200-580q0 75 52.5 127.5T380-400Z"/></svg>
+            <input id="scratchpad-search" type="search" placeholder="Search Scratch Pads…" autocomplete="off" aria-label="Search Scratch Pads by title" />
+          </div>
+          <div id="scratchpad-list" class="scratchpad-list" role="list" aria-label="Scratch Pads"></div>
+        </nav>
+        <div id="related-panel" class="related-panel" hidden>
+          <div class="related-panel-top">
+            <button
+              id="related-panel-close"
+              class="related-panel-close"
+              type="button"
+              title="Close related conversations"
+              aria-label="Close related conversations"
+            >✕</button>
+          </div>
+          <div class="related-panel-heading">
+            <h2 class="related-panel-title" id="related-panel-title">Related Conversations</h2>
+            <button type="button" id="related-panel-for" class="related-panel-for" hidden></button>
+          </div>
+          <div id="related-sort-row" class="related-sort-row" hidden>
+            <label for="related-sort">Sort By:</label>
+            <select id="related-sort">
+              <option value="newest" selected>Date Newest</option>
+              <option value="oldest">Date Oldest</option>
+              <option value="az">A to Z</option>
+              <option value="za">Z to A</option>
+            </select>
+          </div>
+          <div id="related-list" class="related-list"></div>
+          <div id="related-find-wrap" class="related-find-wrap">
+            <button type="button" id="related-find-btn" class="related-find-btn">Find Related Conversations</button>
+          </div>
+        </div>
+        <div class="sidebar-header">
+          <div class="sidebar-title-row">
+            <button
+              id="sidebar-toggle"
+              title="Collapse / expand sidebar"
+              aria-label="Toggle sidebar"
+            >
+              ☰
+            </button>
+            <div
+              id="provider-toggle"
+              class="provider-toggle"
+              role="group"
+              aria-label="Show ChatGPT or Claude conversations"
+            >
+              <button
+                type="button"
+                class="provider-seg"
+                data-provider="chatgpt"
+              >
+                ChatGPT
+              </button>
+              <button
+                type="button"
+                class="provider-seg"
+                data-provider="claude"
+              >
+                Claude
+              </button>
+            </div>
+          </div>
+          <!-- The visible view picker. It opens a list that can show label
+               colours; the hidden select below stays the source of truth. -->
+          <button type="button" id="view-filter-button" aria-haspopup="menu" title="Filter conversations"></button>
+          <select id="view-filter" title="Filter conversations" hidden>
+            <option value="recent">Recent</option>
+            <option value="pinned">Pinned</option>
+            <option value="archived">Archived</option>
+            <option value="all">All</option>
+            <option value="deleted">Recycle Bin</option>
+            <option value="unverified" hidden>Unverified Models</option>
+          </select>
+          <!-- Recycle Bin action control: chooses what Go does to the checked
+               (or all) conversations. Shown only in the Recycle Bin view. -->
+          <div id="recycle-controls" hidden>
+            <select id="recycle-action" aria-label="Recycle Bin action" title="Recycle Bin action">
+              <option value="delete-all">Delete All</option>
+              <option value="delete-selected">Delete Selected</option>
+              <option value="restore-all">Restore All</option>
+              <option value="restore-selected">Restore Selected</option>
+            </select>
+            <button id="recycle-go" type="button">Go</button>
+          </div>
+          <div id="result-count"></div>
+          <!-- Bulk-tool Preview banner: shown while the list is temporarily
+               filtered to a previewed batch. -->
+          <div id="bulk-preview-banner" hidden>
+            <span id="bulk-preview-banner-text"></span>
+            <button type="button" id="bulk-preview-exit">Exit preview</button>
+          </div>
+        </div>
+        <div id="conv-sections">
+          <section class="conv-section" id="folders-section">
+            <button
+              class="folders-header"
+              id="folders-toggle"
+              aria-expanded="false"
+            >
+              <svg
+                class="folders-chevron"
+                viewBox="0 0 16 16"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M6 4l4 4-4 4"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span>Folders</span>
+            </button>
+            <div id="folders-tree" hidden></div>
+          </section>
+          <section class="conv-section" id="recent-section">
+            <div class="conv-section-header">
+              <span id="list-section-title">Recent</span>
+            </div>
+            <div id="conv-list"></div>
+          </section>
+        </div>
+        <div id="load-more-wrap" hidden>
+          <button id="load-more">Load more</button>
+        </div>
+        <div id="simple-search-panel" hidden>
+          <div class="simple-search-row">
+            <div class="search-wrap">
+              <!-- Google Material Symbols: search -->
+              <svg
+                class="search-icon"
+                viewBox="0 -960 960 960"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-400q75 0 127.5-52.5T560-580q0-75-52.5-127.5T380-760q-75 0-127.5 52.5T200-580q0 75 52.5 127.5T380-400Z" />
+              </svg>
+              <input
+                id="search"
+                type="search"
+                placeholder="Search conversations…"
+                autocomplete="off"
+                spellcheck="false"
+                list="search-history-list"
+              />
+              <button
+                id="search-clear-btn"
+                type="button"
+                title="Clear search"
+                aria-label="Clear search"
+                hidden
+              >
+                <!-- Google Material Symbols: close -->
+                <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true">
+                  <path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z" />
+                </svg>
+              </button>
+              <datalist id="search-history-list"></datalist>
+            </div>
+            <button
+              id="manage-search-btn"
+              type="button"
+              title="Manage Search"
+              aria-label="Manage Search"
+            >
+              <!-- Google Material Symbols: manage_search -->
+              <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true">
+                <path d="M80-160v-80h800v80H80Zm0-280v-80h400v80H80Zm0-280v-80h400v80H80Zm708 400L644-464q-21 14-45.5 21t-50.5 7q-75 0-127.5-52.5T368-616q0-75 52.5-127.5T548-796q75 0 127.5 52.5T728-616q0 26-7 50.5T700-520l144 144-56 56ZM548-516q42 0 71-29t29-71q0-42-29-71t-71-29q-42 0-71 29t-29 71q0 42 29 71t71 29Z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div id="sidebar-footer">
+          <!-- Briefcase (Google Material "work"): opens a small menu linking the
+               Global Bookmarks view plus Projects, Memories and Media Hub. Sits
+               directly left of the info button. -->
+          <button
+            id="bookmarks-hub-btn"
+            title="Bookmarks &amp; more"
+            aria-label="Bookmarks and more"
+            aria-haspopup="true"
+            aria-expanded="false"
+          >
+            <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true">
+              <path
+                d="M160-120q-33 0-56.5-23.5T80-200v-440q0-33 23.5-56.5T160-720h160v-80q0-33 23.5-56.5T400-880h160q33 0 56.5 23.5T640-800v80h160q33 0 56.5 23.5T880-640v440q0 33-23.5 56.5T800-120H160Zm240-600h160v-80H400v80Z"
+              />
+            </svg>
+          </button>
+          <button
+            id="sidebar-menu-btn"
+            title="More"
+            aria-label="More"
+            aria-haspopup="true"
+            aria-expanded="false"
+          >
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path
+                d="M10 2a8 8 0 100 16A8 8 0 0010 2z"
+                stroke="currentColor"
+                stroke-width="1.5"
+              />
+              <path
+                d="M10 9v5M10 7v.5"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+          <button
+            id="simple-search-toggle"
+            type="button"
+            title="Search"
+            aria-label="Search"
+            aria-controls="simple-search-panel"
+            aria-expanded="false"
+          >
+            <!-- Google Material Symbols: search -->
+            <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true">
+              <path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-400q75 0 127.5-52.5T560-580q0-75-52.5-127.5T380-760q-75 0-127.5 52.5T200-580q0 75 52.5 127.5T380-400Z" />
+            </svg>
+          </button>
+        </div>
+      </aside>
+
+      <nav id="workspace-controls" class="workspace-controls" aria-label="Workspace controls">
+      <!-- Popup menu anchored to the sidebar "More" button.
+           Add future items as more .sidebar-menu-item buttons with a data-action. -->
+      <div id="sidebar-menu" class="sidebar-menu" role="menu" hidden>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
+          data-action="import-new"
+        >
+          <span class="sidebar-menu-item-icon" aria-hidden="true">📥</span>
+          <span class="sidebar-menu-item-label">Import New Chats</span>
+        </button>
+        <button class="sidebar-menu-item" role="menuitem" data-action="settings">
+          <span class="sidebar-menu-item-icon" aria-hidden="true">⚙️</span>
+          <span class="sidebar-menu-item-label">Settings</span>
+        </button>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
+          data-action="gizmos"
+        >
+          <span class="sidebar-menu-item-icon" aria-hidden="true">🤖</span>
+          <span class="sidebar-menu-item-label">Custom GPTs</span>
+        </button>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
+          data-action="attachment-report"
+        >
+          <span class="sidebar-menu-item-icon" aria-hidden="true">🔗</span>
+          <span class="sidebar-menu-item-label">Attachment Report</span>
+        </button>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
+          data-action="import-audit"
+        >
+          <span class="sidebar-menu-item-icon" aria-hidden="true">📋</span>
+          <span class="sidebar-menu-item-label">Import Audit</span>
+        </button>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
+          data-action="claude-models"
+          id="claude-models-menu-item"
+        >
+          <span class="sidebar-menu-item-icon" aria-hidden="true">🗓️</span>
+          <span class="sidebar-menu-item-label">Add Claude Models</span>
+        </button>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
+          data-action="labels"
+        >
+          <span class="sidebar-menu-item-icon" aria-hidden="true">🏷️</span>
+          <span class="sidebar-menu-item-label">Labels</span>
+        </button>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
+          data-action="error-log"
+        >
+          <span class="sidebar-menu-item-icon" aria-hidden="true">⚠️</span>
+          <span class="sidebar-menu-item-label">Error Log</span>
+        </button>
+        <button class="sidebar-menu-item" role="menuitem" data-action="about">
+          <span class="sidebar-menu-item-icon" aria-hidden="true">ⓘ</span>
+          <span class="sidebar-menu-item-label">About</span>
+        </button>
+      </div>
+
+      <!-- Popup menu anchored to the briefcase button. Global Bookmarks sits at
+           the top; the other entries are the former footer icons. -->
+      <div id="bookmarks-hub-menu" class="sidebar-menu" role="menu" hidden>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
+          data-action="global-bookmarks"
+        >
+          <span class="sidebar-menu-item-icon" aria-hidden="true">🔖</span>
+          <span class="sidebar-menu-item-label">Global Bookmarks</span>
+        </button>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
+          data-action="projects"
+        >
+          <span class="sidebar-menu-item-icon" aria-hidden="true">📁</span>
+          <span class="sidebar-menu-item-label">Projects</span>
+        </button>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
+          data-action="memories"
+        >
+          <span class="sidebar-menu-item-icon" aria-hidden="true">🧠</span>
+          <span class="sidebar-menu-item-label">Memories</span>
+        </button>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
+          data-action="media-hub"
+        >
+          <span class="sidebar-menu-item-icon" aria-hidden="true">🖼️</span>
+          <span class="sidebar-menu-item-label">Media Hub</span>
+        </button>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
+          data-action="scratch-pads"
+        >
+          <!-- Google Material Symbols: edit_note -->
+          <span class="sidebar-menu-item-icon" aria-hidden="true"><svg class="sidebar-menu-item-svg" viewBox="0 -960 960 960" fill="currentColor"><path d="M160-400v-80h280v80H160Zm0-160v-80h440v80H160Zm0-160v-80h440v80H160Zm360 560v-123l221-220q9-9 20-13t22-4q12 0 23 4.5t20 13.5l37 37q8 9 12.5 20t4.5 22q0 11-4 22.5T863-380L643-160H520Zm300-263-37-37 37 37ZM580-220h38l121-122-18-19-19-18-122 121v38Zm141-141-19-18 37 37-18-19Z"/></svg></span>
+          <span class="sidebar-menu-item-label">Scratch Pads</span>
+        </button>
+      </div>
+
+      <!-- Right-click menu for the Folders section, positioned at the click. -->
+      <div id="folders-ctx-menu" class="sidebar-menu" role="menu" hidden>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
+          data-action="add-folder"
+        >
+          <span class="sidebar-menu-item-label">Add New Folder</span>
+        </button>
+      </div>
+      <div id="sidebar-resize" aria-hidden="true"></div>
+      </nav>
+
+      <main id="main">
+        <div id="tabs-wrap" hidden>
+          <div id="tabs-list"></div>
+        </div>
+        <div id="empty-state">
+          <div class="empty-inner">
+            <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+              <rect
+                x="6"
+                y="10"
+                width="36"
+                height="28"
+                rx="4"
+                stroke="currentColor"
+                stroke-width="2"
+              />
+              <line
+                x1="14"
+                y1="18"
+                x2="34"
+                y2="18"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <line
+                x1="14"
+                y1="24"
+                x2="34"
+                y2="24"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <line
+                x1="14"
+                y1="30"
+                x2="26"
+                y2="30"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+            <p role="heading" aria-level="1">Select a conversation to read it</p>
+            <p class="empty-hint">
+              Press <kbd>/</kbd> to search · <kbd>↑</kbd><kbd>↓</kbd> to
+              navigate
+            </p>
+          </div>
+        </div>
+
+        <div id="thread" hidden>
+          <!-- Thin title bar, always visible. Its chevron shows or hides the
+               header below it; collapsed, the bar carries the chat's name so
+               the top of the pane is one slim line. -->
+          <div class="thread-titlebar">
+            <!-- Shown after following a link out of a Scratch Pad. -->
+            <button id="scratchpad-return-btn" type="button" class="scratchpad-return-btn" hidden>
+              <!-- Google Material Symbols: arrow_back -->
+              <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="m313-440 224 224-57 56-320-320 320-320 57 56-224 224h487v80H313Z"/></svg>
+              <span id="scratchpad-return-label">Back to Scratch Pad</span>
+            </button>
+            <span id="thread-titlebar-label" role="heading" aria-level="1"></span>
+            <button
+              id="related-toggle-btn"
+              type="button"
+              title="Related Conversations"
+              aria-label="Open related conversations"
+              aria-pressed="false"
+              hidden
+            >
+              <!-- Google Material Symbols: hub (opens Related Conversations) -->
+              <svg class="related-toggle-icon" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true">
+                <path d="M240-40q-50 0-85-35t-35-85q0-50 35-85t85-35q14 0 26 3t23 8l57-71q-28-31-39-70t-5-78l-81-27q-17 25-43 40t-58 15q-50 0-85-35T0-580q0-50 35-85t85-35q50 0 85 35t35 85v8l81 28q20-36 53.5-61t75.5-32v-87q-39-11-64.5-42.5T360-840q0-50 35-85t85-35q50 0 85 35t35 85q0 42-26 73.5T510-724v87q42 7 75.5 32t53.5 61l81-28v-8q0-50 35-85t85-35q50 0 85 35t35 85q0 50-35 85t-85 35q-32 0-58.5-15T739-515l-81 27q6 39-5 77.5T614-340l57 70q11-5 23-7.5t26-2.5q50 0 85 35t35 85q0 50-35 85t-85 35q-50 0-85-35t-35-85q0-20 6.5-38.5T624-232l-57-71q-41 23-87.5 23T392-303l-56 71q11 15 17.5 33.5T360-160q0 50-35 85t-85 35ZM120-540q17 0 28.5-11.5T160-580q0-17-11.5-28.5T120-620q-17 0-28.5 11.5T80-580q0 17 11.5 28.5T120-540Zm120 420q17 0 28.5-11.5T280-160q0-17-11.5-28.5T240-200q-17 0-28.5 11.5T200-160q0 17 11.5 28.5T240-120Zm240-680q17 0 28.5-11.5T520-840q0-17-11.5-28.5T480-880q-17 0-28.5 11.5T440-840q0 17 11.5 28.5T480-800Zm0 440q42 0 71-29t29-71q0-42-29-71t-71-29q-42 0-71 29t-29 71q0 42 29 71t71 29Zm240 240q17 0 28.5-11.5T760-160q0-17-11.5-28.5T720-200q-17 0-28.5 11.5T680-160q0 17 11.5 28.5T720-120Zm120-420q17 0 28.5-11.5T880-580q0-17-11.5-28.5T840-620q-17 0-28.5 11.5T800-580q0 17 11.5 28.5T840-540ZM480-840ZM120-580Zm360 120Zm360-120ZM240-160Zm480 0Z"/>
+              </svg>
+            </button>
+            <button
+              id="conv-link-btn"
+              type="button"
+              title="Link to this conversation"
+              aria-label="Link to this conversation"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              hidden
+            >
+              <!-- Google Material Symbols: link -->
+              <svg class="conv-link-icon" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M440-280H280q-83 0-141.5-58.5T80-480q0-83 58.5-141.5T280-680h160v80H280q-50 0-85 35t-35 85q0 50 35 85t85 35h160v80ZM320-440v-80h320v80H320Zm200 160v-80h160q50 0 85-35t35-85q0-50-35-85t-85-35H520v-80h160q83 0 141.5 58.5T880-480q0 83-58.5 141.5T680-280H520Z"/></svg>
+            </button>
+            <button
+              id="notes-side-toggle-btn"
+              type="button"
+              title="Open notes panel"
+              aria-label="Open notes panel"
+              aria-pressed="false"
+              hidden
+            >
+              <!-- Google Material Symbols: left_panel_open -->
+              <svg class="notes-side-toggle-icon" id="notes-side-icon-open" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true">
+                <path d="M120-120v-720h720v720H120Zm240-80h400v-560H360v560Zm-160 0h80v-560h-80v560Zm0-560v560-560Zm300 440 160-160-160-160-56 56 64 64H400v80h108l-64 64 56 56Z"/>
+              </svg>
+              <!-- Google Material Symbols: left_panel_close -->
+              <svg class="notes-side-toggle-icon" id="notes-side-icon-close" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" hidden>
+                <path d="M120-120v-720h720v720H120Zm240-80h400v-560H360v560Zm-160 0h80v-560h-80v560Zm0-560v560-560Zm360 440 56-56-64-64h108v-80H552l64-64-56-56-160 160 160 160Z"/>
+              </svg>
+            </button>
+            <button
+              id="bookmarks-toggle-btn"
+              type="button"
+              title="Bookmarks"
+              aria-label="Show bookmarks"
+              hidden
+            >
+              <!-- Google Material Symbols: bookmark (opens the bookmark list) -->
+              <svg class="bookmark-nav-icon" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true">
+                <path d="M200-120v-640q0-33 23.5-56.5T280-840h400q33 0 56.5 23.5T760-760v640L480-240 200-120Zm80-122 200-86 200 86v-518H280v518Zm0-518h400-400Z"/>
+              </svg>
+            </button>
+            <button
+              id="summary-toggle-btn"
+              type="button"
+              title="Summary"
+              aria-label="Open summary"
+              hidden
+            >
+              <!-- Google Material Symbols: book (default: open summary) -->
+              <svg class="summary-toggle-icon" id="summary-icon-book" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/>
+              </svg>
+              <!-- Google Material Symbols: forum (shown when summary is open: back to chat) -->
+              <svg class="summary-toggle-icon" id="summary-icon-forum" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" hidden>
+                <path d="M15 4v7H5.17L4 12.17V4h11m1-2H3c-.55 0-1 .45-1 1v14l4-4h10c.55 0 1-.45 1-1V3c0-.55-.45-1-1-1zm5 4h-2v9H6v2c0 .55.45 1 1 1h11l4 4V7c0-.55-.45-1-1-1z"/>
+              </svg>
+            </button>
+            <button
+              id="notes-toggle-btn"
+              type="button"
+              title="Notes"
+              aria-label="Open notes"
+              hidden
+            >
+              <!-- Google Material: assignment (opens the full Notes screen) -->
+              <svg class="notes-toggle-icon" id="notes-icon-assignment" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1S9.6 1.84 9.18 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2Zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1Zm2 14H7v-2h7v2Zm3-4H7v-2h10v2Zm0-4H7V7h10v2Z"/>
+              </svg>
+              <!-- Google Material: forum (returns from Notes to conversation) -->
+              <svg class="notes-toggle-icon" id="notes-icon-forum" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" hidden>
+                <path d="M15 4v7H5.17L4 12.17V4h11m1-2H3c-.55 0-1 .45-1 1v14l4-4h10c.55 0 1-.45 1-1V3c0-.55-.45-1-1-1Zm5 4h-2v9H6v2c0 .55.45 1 1 1h11l4 4V7c0-.55-.45-1-1-1Z"/>
+              </svg>
+            </button>
+            <button
+              id="thread-collapse-btn"
+              type="button"
+              title="Collapse header"
+              aria-label="Collapse header"
+              aria-expanded="true"
+            >
+              <svg class="thread-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path
+                  d="M6 4l4 4-4 4"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
+          <div class="thread-header" id="thread-header">
+            <div class="thread-header-main">
+              <div class="thread-title-row">
+                <h1 id="thread-title"></h1>
+              </div>
+              <!-- Label squares for the open conversation. With the "Show Labels
+                   in Chat Header" setting on they render on their own line
+                   between the title and the metadata line; with it off no line
+                   is rendered at all. -->
+              <div id="thread-title-square"></div>
+              <div id="thread-meta"></div>
+            </div>
+            <div id="thread-actions">
+              <div class="thread-menu-wrap">
+                <button id="move-to-btn" class="thread-action-btn">
+                  <span>Move to</span>
+                  <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path
+                      d="M4 6l4 4 4-4"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+                <div
+                  id="move-to-menu"
+                  class="thread-dropdown"
+                  role="menu"
+                  hidden
+                ></div>
+              </div>
+              <div class="thread-menu-wrap">
+                <button
+                  id="thread-more-btn"
+                  class="thread-action-btn thread-more-btn"
+                  title="More"
+                  aria-label="More"
+                  aria-haspopup="true"
+                >
+                  ⋮
+                </button>
+                <div
+                  id="thread-more-menu"
+                  class="thread-dropdown"
+                  role="menu"
+                  hidden
+                >
+                  <button class="thread-dropdown-item" data-action="compare">
+                    Compare
+                  </button>
+                  <button class="thread-dropdown-item" data-action="rename">
+                    Rename
+                  </button>
+                  <button class="thread-dropdown-item" data-action="pin">
+                    Pin
+                  </button>
+                  <button class="thread-dropdown-item" data-action="summary">
+                    Summary
+                  </button>
+                  <button class="thread-dropdown-item" data-action="archive">
+                    Archive
+                  </button>
+                  <button class="thread-dropdown-item" data-action="delete">
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div id="thread-tags"></div>
+          </div>
+          <!-- Compact bookmark bar (shown for 2–4 bookmarks). Sits beneath the
+               chat header and stays put whether or not that header is collapsed,
+               until the user closes it. -->
+          <div id="bookmark-bar" class="bookmark-bar" hidden>
+            <div class="bookmark-bar-links" id="bookmark-bar-links"></div>
+            <button
+              id="bookmark-bar-close"
+              class="bookmark-bar-close"
+              type="button"
+              title="Close bookmarks"
+              aria-label="Close bookmarks"
+            >
+              ✕
+            </button>
+          </div>
+          <div id="messages"></div>
+          <!-- Summary body (replaces messages when the summary view is active) -->
+          <div id="summary-body" hidden>
+            <!-- Condensed Summary section (hidden when setting is off) -->
+            <section id="summary-condensed-section" class="summary-section" hidden>
+              <div class="summary-section-header">
+                <h3 class="summary-section-title">Condensed Summary</h3>
+                <div class="summary-section-actions">
+                  <button type="button" class="summary-btn" id="condensed-revert-btn" disabled>Revert</button>
+                  <button type="button" class="summary-btn summary-btn-primary" id="condensed-save-btn" disabled>Save</button>
+                </div>
+              </div>
+              <textarea
+                id="condensed-summary-input" aria-label="Condensed summary"
+                class="summary-textarea summary-textarea-condensed"
+                rows="5"
+                placeholder=""
+              ></textarea>
+              <div class="summary-author-row" id="condensed-author-row" hidden>
+                <span class="summary-author-label" id="condensed-author-label"></span>
+              </div>
+            </section>
+            <!-- Main Summary section -->
+            <section class="summary-section">
+              <div class="summary-section-header">
+                <h3 class="summary-section-title">Summary</h3>
+                <div class="summary-section-actions">
+                  <button type="button" class="summary-btn" id="summary-revert-btn" disabled>Revert</button>
+                  <button type="button" class="summary-btn summary-btn-primary" id="summary-save-btn" disabled>Save</button>
+                </div>
+              </div>
+              <div class="summary-editor" id="summary-editor">
+                <div class="summary-mode-switch" role="group" aria-label="Summary editing mode">
+                  <button type="button" class="summary-mode-btn" id="summary-mode-visual" aria-pressed="true">Visual</button>
+                  <button type="button" class="summary-mode-btn" id="summary-mode-markdown" aria-pressed="false">Markdown</button>
+                </div>
+                <div class="summary-toolbar" id="summary-toolbar" role="toolbar" aria-label="Summary formatting">
+                  <select class="summary-format-select" data-format="normal" aria-label="Text style">
+                    <option value="normal">Normal</option>
+                    <option value="heading1">Heading 1</option>
+                    <option value="heading2">Heading 2</option>
+                    <option value="heading3">Heading 3</option>
+                  </select>
+                  <button type="button" class="summary-tool-btn" data-format="bold" title="Bold" aria-label="Bold"><strong>B</strong></button>
+                  <button type="button" class="summary-tool-btn" data-format="italic" title="Italic" aria-label="Italic"><em>I</em></button>
+                  <button type="button" class="summary-tool-btn" data-format="underline" title="Underline" aria-label="Underline"><u>U</u></button>
+                  <button type="button" class="summary-tool-btn" data-format="strike" title="Strikethrough" aria-label="Strikethrough"><s>S</s></button>
+                  <div class="summary-highlight-wrap">
+                    <button type="button" class="summary-tool-btn" id="summary-highlight-button" title="Highlight" aria-label="Highlight">▰</button>
+                    <div class="summary-highlight-menu" id="summary-highlight-menu" hidden>
+                      <div class="summary-palette" aria-label="Highlight palette"></div>
+                      <label class="summary-palette-custom">Custom <input type="color" class="summary-palette-picker" aria-label="Choose custom highlight color"></label>
+                      <button type="button" class="summary-palette-remove">Remove highlight</button>
+                    </div>
+                  </div>
+                  <button type="button" class="summary-tool-btn" data-format="bullet" title="Bulleted list" aria-label="Bulleted list">•≡</button>
+                  <button type="button" class="summary-tool-btn" data-format="numbered" title="Numbered list" aria-label="Numbered list">1≡</button>
+                </div>
+                <div id="summary-visual" class="summary-visual" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Visual Summary"></div>
+                <textarea id="summary-input" aria-label="Summary Markdown" class="summary-textarea summary-textarea-main" placeholder="" hidden></textarea>
+              </div>
+              <div class="summary-author-row" id="summary-author-row" hidden>
+                <span class="summary-author-label" id="summary-author-label"></span>
+              </div>
+            </section>
+          </div>
+          <!-- Full Notes screen (replaces messages like the Summary screen) -->
+          <div id="notes-body" hidden>
+            <section class="summary-section notes-full-section" data-note-section="user_notes">
+              <div class="summary-section-header">
+                <h3 class="summary-section-title">User Notes</h3>
+                <div class="summary-section-actions">
+                  <button type="button" class="summary-btn notes-full-revert" data-note-field="user_notes" disabled>Revert</button>
+                  <button type="button" class="summary-btn summary-btn-primary notes-full-save" data-note-field="user_notes" disabled>Save</button>
+                </div>
+              </div>
+              <textarea id="notes-full-user-notes" aria-label="User Notes" class="summary-textarea notes-full-textarea" data-note-field="user_notes"></textarea>
+            </section>
+            <section class="summary-section notes-full-section" data-note-section="notes_to_ai">
+              <div class="summary-section-header">
+                <h3 class="summary-section-title">Notes to the AI</h3>
+                <div class="summary-section-actions">
+                  <button type="button" class="summary-btn notes-full-revert" data-note-field="notes_to_ai" disabled>Revert</button>
+                  <button type="button" class="summary-btn summary-btn-primary notes-full-save" data-note-field="notes_to_ai" disabled>Save</button>
+                </div>
+              </div>
+              <textarea id="notes-full-to-ai" aria-label="Notes to the AI" class="summary-textarea notes-full-textarea" data-note-field="notes_to_ai"></textarea>
+            </section>
+            <section class="summary-section notes-full-section" data-note-section="notes_from_ai">
+              <div class="summary-section-header">
+                <h3 class="summary-section-title">Notes from the AI</h3>
+                <div class="summary-section-actions">
+                  <button type="button" class="summary-btn notes-full-revert" data-note-field="notes_from_ai" disabled>Revert</button>
+                  <button type="button" class="summary-btn summary-btn-primary notes-full-save" data-note-field="notes_from_ai" disabled>Save</button>
+                </div>
+              </div>
+              <textarea id="notes-full-from-ai" aria-label="Notes from the AI" class="summary-textarea notes-full-textarea" data-note-field="notes_from_ai"></textarea>
+            </section>
+          </div>
+          <!-- Artifact side panel (absolute, inside #thread) -->
+          <div id="artifact-panel" hidden>
+            <div id="artifact-panel-resize"></div>
+            <div class="artifact-panel-header">
+              <span id="artifact-panel-title"></span>
+              <button id="artifact-panel-close" title="Close">✕</button>
+            </div>
+            <div id="artifact-panel-body"></div>
+          </div>
+        </div>
+
+        <div id="gallery" hidden>
+          <div class="thread-header">
+            <h1>Media Hub</h1>
+            <div id="gallery-meta">
+              Images, attachments, and artifacts grouped by conversation
+            </div>
+          </div>
+          <div id="gallery-grid"></div>
+        </div>
+
+        <div id="memories-panel" hidden>
+          <div class="thread-header">
+            <h1>Memories</h1>
+            <div id="memories-meta">Claude's memory about you</div>
+          </div>
+          <div id="memories-content"></div>
+        </div>
+
+        <div id="projects-panel" hidden>
+          <div class="thread-header">
+            <h1>Projects</h1>
+            <div id="projects-meta"></div>
+          </div>
+          <div id="projects-content"></div>
+        </div>
+
+        <!-- Scratch Pads workspace (scratchpads.js). The editor is the Summary
+             editor's engine (summary.js attachVisualEditor), with a link tool. -->
+        <div id="scratchpad-panel" hidden>
+          <div class="thread-header scratchpad-header">
+            <div class="scratchpad-title-row">
+              <input id="scratchpad-title-input" class="scratchpad-title-input" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Scratch Pad title" hidden />
+              <div class="summary-section-actions">
+                <button type="button" class="summary-btn" id="scratchpad-revert-btn" disabled hidden>Revert</button>
+                <button type="button" class="summary-btn summary-btn-primary" id="scratchpad-save-btn" disabled hidden>Save</button>
+              </div>
+            </div>
+            <div id="scratchpad-status" class="scratchpad-status" role="status" aria-live="polite"></div>
+          </div>
+          <div id="scratchpad-scroll" class="scratchpad-scroll">
+            <div id="scratchpad-empty" class="scratchpad-empty">
+              <p id="scratchpad-empty-text">No Scratch Pad is open.</p>
+              <button type="button" id="scratchpad-empty-new" class="summary-btn summary-btn-primary">New Scratch Pad</button>
+            </div>
+            <div class="summary-editor scratchpad-editor" id="scratchpad-editor" hidden>
+              <div class="summary-mode-switch" role="group" aria-label="Scratch Pad editing mode">
+                <button type="button" class="summary-mode-btn" id="scratchpad-mode-visual" aria-pressed="true">Visual</button>
+                <button type="button" class="summary-mode-btn" id="scratchpad-mode-markdown" aria-pressed="false">Markdown</button>
+              </div>
+              <div class="summary-toolbar" id="scratchpad-toolbar" role="toolbar" aria-label="Scratch Pad formatting">
+                <select class="summary-format-select" data-format="normal" aria-label="Text style">
+                  <option value="normal">Normal</option>
+                  <option value="heading1">Heading 1</option>
+                  <option value="heading2">Heading 2</option>
+                  <option value="heading3">Heading 3</option>
+                </select>
+                <button type="button" class="summary-tool-btn" data-format="bold" title="Bold" aria-label="Bold"><strong>B</strong></button>
+                <button type="button" class="summary-tool-btn" data-format="italic" title="Italic" aria-label="Italic"><em>I</em></button>
+                <button type="button" class="summary-tool-btn" data-format="underline" title="Underline" aria-label="Underline"><u>U</u></button>
+                <button type="button" class="summary-tool-btn" data-format="strike" title="Strikethrough" aria-label="Strikethrough"><s>S</s></button>
+                <div class="summary-highlight-wrap">
+                  <button type="button" class="summary-tool-btn" id="scratchpad-highlight-button" title="Highlight" aria-label="Highlight">▰</button>
+                  <div class="summary-highlight-menu" id="scratchpad-highlight-menu" hidden>
+                    <div class="summary-palette" aria-label="Highlight palette"></div>
+                    <label class="summary-palette-custom">Custom <input type="color" class="summary-palette-picker" aria-label="Choose custom highlight color"></label>
+                    <button type="button" class="summary-palette-remove">Remove highlight</button>
+                  </div>
+                </div>
+                <button type="button" class="summary-tool-btn" data-format="bullet" title="Bulleted list" aria-label="Bulleted list">•≡</button>
+                <button type="button" class="summary-tool-btn" data-format="numbered" title="Numbered list" aria-label="Numbered list">1≡</button>
+                <button type="button" class="summary-tool-btn scratchpad-link-tool" data-format="link" id="scratchpad-link-button" title="Insert link" aria-label="Insert link" aria-haspopup="dialog" aria-expanded="false">
+                  <!-- Google Material Symbols: link -->
+                  <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M440-280H280q-83 0-141.5-58.5T80-480q0-83 58.5-141.5T280-680h160v80H280q-50 0-85 35t-35 85q0 50 35 85t85 35h160v80ZM320-440v-80h320v80H320Zm200 160v-80h160q50 0 85-35t35-85q0-50-35-85t-85-35H520v-80h160q83 0 141.5 58.5T880-480q0 83-58.5 141.5T680-280H520Z"/></svg>
+                </button>
+              </div>
+              <div id="scratchpad-visual" class="summary-visual scratchpad-visual" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Scratch Pad"></div>
+              <textarea id="scratchpad-input" aria-label="Scratch Pad Markdown" class="summary-textarea summary-textarea-main scratchpad-textarea" hidden></textarea>
+              <!-- Shown while the caret is in a link: follow, change or remove it. -->
+              <div id="scratchpad-link-bubble" class="scratchpad-link-bubble" role="group" aria-label="Link" hidden>
+                <span id="scratchpad-link-bubble-text" class="scratchpad-link-bubble-text"></span>
+                <button type="button" class="scratchpad-bubble-btn" data-link-action="open">Open</button>
+                <button type="button" class="scratchpad-bubble-btn" data-link-action="change">Change</button>
+                <button type="button" class="scratchpad-bubble-btn" data-link-action="remove">Remove link</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="global-bookmarks-panel" hidden>
+          <div class="thread-header">
+            <h1>Global Bookmarks</h1>
+            <div id="global-bookmarks-meta"></div>
+          </div>
+          <div id="global-bookmarks-toolbar">
+            <div class="gb-search-wrap">
+              <svg
+                class="gb-search-icon"
+                viewBox="0 0 20 20"
+                fill="none"
+                aria-hidden="true"
+              >
+                <circle
+                  cx="9"
+                  cy="9"
+                  r="6"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                />
+                <path
+                  d="M14 14l3 3"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <input
+                id="gb-search"
+                type="search"
+                placeholder="Search titles and bookmarks…"
+                autocomplete="off"
+                aria-label="Search titles and bookmarks"
+              />
+              <select id="gb-search-scope" aria-label="What to search">
+                <option value="both">Both</option>
+                <option value="titles">Titles</option>
+                <option value="bookmarks">Bookmarks</option>
+              </select>
+            </div>
+            <div class="gb-controls">
+              <label class="gb-sort-wrap">
+                <span class="gb-control-label">Sort</span>
+                <select id="gb-sort" aria-label="Sort conversations">
+                  <option value="newest">Newest first</option>
+                  <option value="oldest">Oldest first</option>
+                </select>
+              </label>
+              <label class="gb-collapse-wrap" for="gb-collapse-toggle">
+                <input type="checkbox" id="gb-collapse-toggle" />
+                <span class="gb-control-label gb-caps">Collapse Bookmarks</span>
+              </label>
+            </div>
+          </div>
+          <div id="global-bookmarks-scroll">
+            <div id="global-bookmarks-list"></div>
+            <div id="gb-sentinel" aria-hidden="true"></div>
+          </div>
+        </div>
+
+        <div id="import-new-panel" hidden>
+          <div class="thread-header">
+            <h1>Import New Chats</h1>
+            <div id="import-new-meta">
+              Bring newly-exported Claude and ChatGPT backups into your history.
+            </div>
+          </div>
+          <div id="import-new-content">
+            <div class="import-new-top">
+              <div class="import-deleted-setting">
+                <label for="import-deleted-mode" class="import-deleted-label"
+                  >Previously deleted conversations</label
+                >
+                <select id="import-deleted-mode">
+                  <option value="skip">
+                    Don't import previously deleted chats.
+                  </option>
+                  <option value="all">
+                    Import all previously deleted chats.
+                  </option>
+                  <option value="review">
+                    Review previously deleted chats before re-importing.
+                  </option>
+                </select>
+                <label
+                  id="import-review-new-wrap"
+                  class="import-deleted-checkbox"
+                >
+                  <input type="checkbox" id="import-review-new" />
+                  Review deleted conversations that have new messages
+                </label>
+              </div>
+              <div class="import-review-controls">
+                <button id="import-new-btn" type="button">
+                  Import Conversations
+                </button>
+                <button id="import-rebuild-btn" type="button" class="import-review-btn">Rebuild from exports</button>
+                <button id="import-cancel-btn" type="button" class="import-review-btn" hidden>Cancel</button>
+              </div>
+              <div class="import-new-status">
+                <span id="import-job-spinner" aria-hidden="true" hidden><span class="import-spinner"></span></span>
+                <div id="import-new-status" role="status" aria-live="polite"></div>
+              </div>
+              <p class="import-new-hint">
+                Please ensure your new backup files are located in the source
+                folder of this app.
+              </p>
+            </div>
+            <div id="import-new-summary" class="import-new-summary" hidden></div>
+            <!-- Previously deleted conversations held aside for review before
+                 re-importing. Sits between the import controls and the
+                 import-history table. -->
+            <div id="import-review-area" class="import-review-area" hidden>
+              <div class="import-review-head">
+                <h3 class="import-review-title">
+                  Previously deleted conversations to review
+                </h3>
+                <div class="import-review-controls">
+                  <button
+                    id="import-review-all"
+                    type="button"
+                    class="import-review-btn"
+                  >
+                    Import All
+                  </button>
+                  <button
+                    id="import-review-none"
+                    type="button"
+                    class="import-review-btn"
+                  >
+                    Import None
+                  </button>
+                  <button
+                    id="import-review-selected"
+                    type="button"
+                    class="import-review-btn import-review-btn-primary"
+                  >
+                    Import Selected
+                  </button>
+                </div>
+              </div>
+              <table id="import-review-table">
+                <thead>
+                  <tr>
+                    <th class="import-review-check"></th>
+                    <th>Chat Name</th>
+                    <th>First Message</th>
+                    <th>Last Message</th>
+                    <th>Messages</th>
+                  </tr>
+                </thead>
+                <tbody id="import-review-body"></tbody>
+              </table>
+            </div>
+            <div class="import-history">
+              <div class="import-history-filter">
+                <span class="import-history-filter-label"
+                  >Show Conversations From:</span
+                >
+                <label
+                  ><input
+                    type="radio"
+                    name="import-provider-filter"
+                    value="all"
+                    checked
+                  />
+                  All</label
+                >
+                <label
+                  ><input
+                    type="radio"
+                    name="import-provider-filter"
+                    value="claude"
+                  />
+                  Claude</label
+                >
+                <label
+                  ><input
+                    type="radio"
+                    name="import-provider-filter"
+                    value="chatgpt"
+                  />
+                  ChatGPT</label
+                >
+              </div>
+              <table id="import-history-table">
+                <thead>
+                  <tr>
+                    <th data-sort="file_name" data-type="text">File Name</th>
+                    <th data-sort="first_chat" data-type="num">First Message</th>
+                    <th data-sort="last_chat" data-type="num">Last Message</th>
+                    <th data-sort="total_chats" data-type="num">Total Chats</th>
+                    <th data-sort="imported_at" data-type="num">Imported</th>
+                  </tr>
+                </thead>
+                <tbody id="import-history-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="settings-panel" hidden>
+          <div class="thread-header">
+            <h1>Settings</h1>
+            <div id="settings-meta">
+              Preferences for how this app looks and behaves.
+            </div>
+          </div>
+          <div id="settings-content">
+            <section class="settings-section">
+              <h3 class="settings-section-title">Sidebar Preferences</h3>
+              <div class="settings-setting settings-sidebar-width-setting">
+                <div class="settings-setting-text">
+                  <label class="settings-setting-title" for="setting-sidebar-width">Sidebar Width</label>
+                  <p class="settings-setting-subtext">Adjusts immediately and stays synchronized with dragging the sidebar edge.</p>
+                </div>
+                <div class="settings-sidebar-width-control">
+                  <input type="range" id="setting-sidebar-width" min="220" max="520" step="2" />
+                  <label class="settings-pixel-input"><input type="number" id="setting-sidebar-width-number" min="220" max="520" step="2" /><span>px</span></label>
+                </div>
+              </div>
+              <div class="settings-setting">
+                <div class="settings-setting-text">
+                  <label class="settings-setting-title" for="setting-chat-snippet">Show Chat Snippet</label>
+                  <p class="settings-setting-subtext">Display the beginning of the chat text under conversation titles.</p>
+                </div>
+                <label class="settings-switch">
+                  <input type="checkbox" role="switch" id="setting-chat-snippet" />
+                  <span class="settings-switch-track" aria-hidden="true">
+                    <span class="settings-switch-thumb"></span>
+                  </span>
+                </label>
+              </div>
+              <div class="settings-setting">
+                <div class="settings-setting-text">
+                  <label class="settings-setting-title" for="setting-summary-hints">Show Condensed Summary Hint</label>
+                  <p class="settings-setting-subtext">Conversations with available condensed summaries will have a hoverable link to show them.</p>
+                </div>
+                <label class="settings-switch">
+                  <input type="checkbox" role="switch" id="setting-summary-hints" checked />
+                  <span class="settings-switch-track" aria-hidden="true">
+                    <span class="settings-switch-thumb"></span>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <section class="settings-section">
+              <h3 class="settings-section-title">Chat Header Settings</h3>
+              <div class="settings-setting">
+                <div class="settings-setting-text">
+                  <label class="settings-setting-title" for="setting-header-labels">Show Labels in Chat Header</label>
+                </div>
+                <label class="settings-switch">
+                  <input type="checkbox" role="switch" id="setting-header-labels" />
+                  <span class="settings-switch-track" aria-hidden="true">
+                    <span class="settings-switch-thumb"></span>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <section class="settings-section">
+              <h3 class="settings-section-title">Summaries</h3>
+              <div class="settings-setting">
+                <div class="settings-setting-text">
+                  <label class="settings-setting-title" for="setting-condensed-summary">Include Condensed Summary</label>
+                  <p class="settings-setting-subtext">Shows the Condensed Summary on the summary screen. Turning this off will not remove any entered descriptions.</p>
+                </div>
+                <label class="settings-switch">
+                  <input type="checkbox" role="switch" id="setting-condensed-summary" />
+                  <span class="settings-switch-track" aria-hidden="true">
+                    <span class="settings-switch-thumb"></span>
+                  </span>
+                </label>
+              </div>
+              <div class="settings-setting">
+                <div class="settings-setting-text">
+                  <label class="settings-setting-title" for="setting-summary-author">Show Summary Content Author</label>
+                </div>
+                <label class="settings-switch">
+                  <input type="checkbox" role="switch" id="setting-summary-author" />
+                  <span class="settings-switch-track" aria-hidden="true">
+                    <span class="settings-switch-thumb"></span>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <section class="settings-section">
+              <h3 class="settings-section-title">Notes</h3>
+              <div class="settings-setting">
+                <div class="settings-setting-text">
+                  <label class="settings-setting-title" for="setting-auto-notes-panel">Automatically launch notes panel over side panel when opening conversation</label>
+                </div>
+                <label class="settings-switch">
+                  <input type="checkbox" role="switch" id="setting-auto-notes-panel" />
+                  <span class="settings-switch-track" aria-hidden="true">
+                    <span class="settings-switch-thumb"></span>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <section class="settings-section">
+              <h3 class="settings-section-title">Compare Tab Model Identifier</h3>
+              <p class="settings-section-hint">
+                The colour each provider's Compare tab is outlined in. An active
+                tab fills with its colour.
+              </p>
+              <div class="settings-row">
+                <label class="settings-color-label" for="compare-color-chatgpt"
+                  >ChatGPT</label
+                >
+                <input type="color" id="compare-color-chatgpt" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-color-label" for="compare-color-claude"
+                  >Claude</label
+                >
+                <input type="color" id="compare-color-claude" />
+              </div>
+              <button type="button" id="compare-color-reset" class="settings-reset-btn">
+                Reset to defaults
+              </button>
+            </section>
+          </div>
+        </div>
+
+        <div id="about-panel" hidden>
+          <div class="thread-header">
+            <h1>About</h1>
+          </div>
+          <div id="about-content">
+            <p id="about-version" class="about-version"></p>
+            <div class="about-update-row">
+              <button id="check-update-btn" class="about-btn" type="button">Check for Updates</button>
+              <div id="update-status" role="status" aria-live="polite"></div>
+            </div>
+            <section id="update-details" class="update-details" aria-labelledby="update-details-title" hidden>
+              <h2 id="update-details-title" class="update-details-title"></h2>
+              <p id="update-details-summary" class="update-details-summary"></p>
+              <div id="update-local-edits" class="update-local-edits" hidden>
+                <p id="update-local-edits-text"></p>
+                <ul id="update-local-edits-list" class="update-file-list"></ul>
+              </div>
+              <div id="update-changes" class="update-changes"></div>
+              <div class="about-update-row">
+                <button id="apply-update-btn" class="about-btn" type="button"></button>
+              </div>
+            </section>
+            <section id="update-backup" class="update-backup" aria-labelledby="update-backup-title" hidden>
+              <h2 id="update-backup-title" class="update-details-title">Undo the last update</h2>
+              <p id="update-backup-text" class="update-details-summary"></p>
+              <div class="about-update-row">
+                <button id="restore-update-btn" class="about-btn about-btn-secondary" type="button"></button>
+                <button id="restore-update-confirm-btn" class="about-btn" type="button" hidden></button>
+                <button id="restore-update-cancel-btn" class="about-btn about-btn-secondary" type="button" hidden>Cancel</button>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div id="import-audit-panel" hidden>
+          <div class="thread-header">
+            <h1>Import Audit</h1>
+            <div id="import-audit-meta">
+              How every conversation in conversations.json was imported
+            </div>
+          </div>
+          <div id="import-audit-content"></div>
+        </div>
+
+        <div id="error-log-panel" hidden>
+          <div class="thread-header">
+            <h1>Error Log</h1>
+            <button type="button" id="error-log-clear-btn" class="error-log-btn">
+              Clear log
+            </button>
+            <div id="error-log-meta">
+              The 10 most recent errors, newest first. Repeats are grouped.
+            </div>
+          </div>
+          <div id="error-log-status" class="sr-only" role="status" aria-live="polite"></div>
+          <div id="error-log-content"></div>
+        </div>
+
+        <div id="claude-models-panel" hidden>
+          <div class="thread-header">
+            <h1>Add Claude Models</h1>
+            <div id="claude-models-meta">
+              Which models claude.ai offered, and when. These dates decide which
+              models a conversation can be tagged with.
+            </div>
+          </div>
+          <div id="claude-models-content">
+            <form id="model-add-form" autocomplete="off">
+              <div class="model-add-field">
+                <label for="model-add-name">Model Name</label>
+                <input id="model-add-name" type="text" required spellcheck="false" />
+              </div>
+              <div class="model-add-field">
+                <label for="model-add-start">Beginning Date</label>
+                <input id="model-add-start" type="date" required />
+              </div>
+              <div class="model-add-field">
+                <label for="model-add-end">End Date</label>
+                <input id="model-add-end" type="date" />
+              </div>
+              <button type="submit" id="model-add-btn">Add</button>
+              <button type="button" id="model-reload-btn">Reload Model Data</button>
+            </form>
+            <div id="model-add-error" role="alert" class="model-form-error" hidden></div>
+            <table id="model-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Start Date</th>
+                  <th>End Date</th>
+                  <th aria-label="Remove"></th>
+                </tr>
+              </thead>
+              <tbody id="model-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="att-report-panel" hidden>
+          <div class="thread-header">
+            <h1>Attachment Report</h1>
+            <button id="att-report-refresh-btn" title="Rescan">
+              🔄 Refresh
+            </button>
+            <div id="att-report-meta">
+              Attachments below have no content in the Claude export and no
+              matching file was found in source/files/
+            </div>
+          </div>
+          <div id="att-report-content"></div>
+        </div>
+
+        <div id="gizmos-panel" hidden>
+          <div class="thread-header">
+            <h1>Custom GPTs</h1>
+            <div class="panel-meta">
+              Name ChatGPT Custom GPTs, find every conversation that shares an
+              imported GPT ID, or move all of one GPT's chats into a folder.
+              Names are kept when history is rebuilt or re-imported.
+            </div>
+          </div>
+          <div id="gizmos-content"></div>
+        </div>
+
+        <div id="labels-panel" hidden>
+          <div class="thread-header">
+            <h1>Labels</h1>
+            <div id="labels-meta">
+              Configurable labels for staging groups of conversations. A
+              conversation can carry several. Names carry no built-in meaning —
+              you choose them, and a name is optional.
+            </div>
+          </div>
+          <div id="labels-content">
+            <!-- A. Label feature settings ─────────────────────────────── -->
+            <section class="labels-section">
+              <h3 class="labels-section-title">Label settings</h3>
+              <p class="labels-section-hint">
+                Turn labels on to show them on conversations. Turning them off
+                hides every label control but keeps your label data intact.
+              </p>
+              <div class="labels-setting-row">
+                <label class="labels-switch">
+                  <input type="checkbox" id="labels-enabled-toggle" />
+                  <span>Enable Conversation Labels</span>
+                </label>
+              </div>
+              <div class="labels-setting-row">
+                <label class="labels-setting-label" for="labels-display-select"
+                  >Label Display</label
+                >
+                <select id="labels-display-select">
+                  <option value="square">Square only</option>
+                  <option value="square_label">Square + Label</option>
+                </select>
+              </div>
+              <!-- Shown only while Square + Label is selected and at least one
+                   square still has no name to show. -->
+              <p id="labels-name-warning" class="warning-text" hidden>
+                Enter labels below or no labels will be applied.
+              </p>
+            </section>
+
+            <!-- B. Label definitions ──────────────────────────────────── -->
+            <section class="labels-section">
+              <h3 class="labels-section-title">Label definitions</h3>
+              <p class="labels-section-hint">
+                Add, rename, recolour, reorder, or delete labels. The order here
+                is the order clicking a conversation's square cycles through.
+                Names are optional — a label with no name is a colour-only
+                square.
+              </p>
+              <p class="labels-section-hint">
+                Labels will only show if square + label display is selected
+                above.
+              </p>
+              <form id="label-add-form" autocomplete="off">
+                <input
+                  type="color"
+                  id="label-add-color"
+                  aria-label="New label colour"
+                />
+                <input
+                  id="label-add-name" aria-label="New label name"
+                  type="text"
+                  placeholder="New label name (optional)"
+                  spellcheck="false"
+                  maxlength="60"
+                />
+                <button type="submit" id="label-add-btn">Add Label</button>
+              </form>
+              <div id="label-add-error" role="alert" class="labels-form-error" hidden></div>
+              <p class="labels-section-hint">
+                Drag a row by the grip on its right edge to reorder — or click
+                the grip to pick the row up, then click where it should go. With
+                the keyboard: focus a grip and use ↑ / ↓ (Home / End to jump to
+                either end).
+              </p>
+              <ul id="label-list" class="label-list"></ul>
+              <!-- Reorder feedback for screen readers. -->
+              <div
+                id="label-reorder-live"
+                class="sr-only"
+                aria-live="polite"
+                role="status"
+              ></div>
+            </section>
+
+            <!-- C. Bulk Label Conversations ───────────────────────────── -->
+            <section class="labels-section">
+              <h3 class="labels-section-title">Bulk Label Conversations</h3>
+              <p class="labels-section-hint">
+                Select conversations by criteria — different fields are combined
+                with AND, multiple values in the same field (Current label, Folder,
+                Tag, Keyword) are combined with OR — then choose whether the
+                chosen labels should be Added, Removed, or Cleared on the batch.
+                Added/Removed only touch the labels you pick, leaving any other
+                labels those conversations carry alone; Cleared removes every
+                label a conversation has. Nothing here deletes, archives, or
+                moves conversations. Preview temporarily filters the
+                conversation list to the batch so you can look through it.
+                Preview is optional — Apply works on its own. Choosing "First"
+                under Limit and applying fewer than everything that qualifies
+                saves the rest as an Unfinished Label Run below, so you can
+                pick up where it left off.
+              </p>
+              <div class="bulk-form">
+                <div class="bulk-row">
+                  <label for="bulk-provider">Provider</label>
+                  <select id="bulk-provider">
+                    <option value="all">All</option>
+                    <option value="claude">Claude</option>
+                    <option value="chatgpt">ChatGPT</option>
+                  </select>
+                </div>
+                <div class="bulk-row">
+                  <label for="bulk-started-op">Started</label>
+                  <select id="bulk-started-op" class="bulk-date-op">
+                    <option value="any">Any</option>
+                    <option value="before">Before</option>
+                    <option value="after">After</option>
+                    <option value="between">Between</option>
+                  </select>
+                  <input type="date" id="bulk-started-date" hidden />
+                  <span id="bulk-started-and" class="bulk-and" hidden>and</span>
+                  <input type="date" id="bulk-started-date2" hidden />
+                </div>
+                <div class="bulk-row">
+                  <label for="bulk-ended-op">Last Message</label>
+                  <select id="bulk-ended-op" class="bulk-date-op">
+                    <option value="any">Any</option>
+                    <option value="before">Before</option>
+                    <option value="after">After</option>
+                    <option value="between">Between</option>
+                  </select>
+                  <input type="date" id="bulk-ended-date" hidden />
+                  <span id="bulk-ended-and" class="bulk-and" hidden>and</span>
+                  <input type="date" id="bulk-ended-date2" hidden />
+                </div>
+                <div class="bulk-row bulk-chip-row">
+                  <span id="bulk-label-label" class="bulk-chip-row-label">Current label</span>
+                  <span
+                    id="bulk-label-chips"
+                    class="bulk-chip-strip"
+                    role="group"
+                    aria-labelledby="bulk-label-label"
+                  ></span>
+                </div>
+                <div class="bulk-row bulk-chip-row">
+                  <span id="bulk-folder-label" class="bulk-chip-row-label">Folder</span>
+                  <span
+                    id="bulk-folder-chips"
+                    class="bulk-chip-strip"
+                    role="group"
+                    aria-labelledby="bulk-folder-label"
+                  ></span>
+                </div>
+                <div class="bulk-row bulk-chip-row">
+                  <span id="bulk-tag-label" class="bulk-chip-row-label">Tag</span>
+                  <span
+                    id="bulk-tag-chips"
+                    class="bulk-chip-strip"
+                    role="group"
+                    aria-labelledby="bulk-tag-label"
+                  ></span>
+                </div>
+                <div class="bulk-row bulk-chip-row">
+                  <span id="bulk-keyword-label" class="bulk-chip-row-label">Keyword</span>
+                  <span
+                    id="bulk-keyword-chips"
+                    class="bulk-chip-strip"
+                    role="group"
+                    aria-labelledby="bulk-keyword-label"
+                  ></span>
+                </div>
+                <div class="bulk-row bulk-row-action">
+                  <span class="bulk-section-subtitle">
+                    What should happen to conversations with these criteria?
+                  </span>
+                </div>
+                <div class="bulk-row">
+                  <label for="bulk-label-action">Labels should be</label>
+                  <select id="bulk-label-action">
+                    <option value="added">Added</option>
+                    <option value="removed">Removed</option>
+                    <option value="cleared">Cleared</option>
+                  </select>
+                </div>
+                <div class="bulk-row bulk-chip-row" id="bulk-target-labels-row">
+                  <span id="bulk-target-labels-label" class="bulk-chip-row-label">
+                    Which labels it should apply to
+                  </span>
+                  <span
+                    id="bulk-target-labels-chips"
+                    class="bulk-chip-strip"
+                    role="group"
+                    aria-labelledby="bulk-target-labels-label"
+                  ></span>
+                </div>
+                <div class="bulk-row">
+                  <label>Limit</label>
+                  <label class="bulk-inline">
+                    <input type="radio" name="bulk-limit" value="all" checked />
+                    All matching
+                  </label>
+                  <label class="bulk-inline">
+                    <input type="radio" name="bulk-limit" value="first" />
+                    First
+                  </label>
+                  <input type="number" id="bulk-limit-n" aria-label="Number of conversations to process" min="1" value="50" disabled />
+                </div>
+                <div class="bulk-row">
+                  <label for="bulk-order">Order</label>
+                  <select id="bulk-order">
+                    <option value="started_asc">Started: oldest first</option>
+                    <option value="started_desc">Started: newest first</option>
+                    <option value="updated_asc">Last Message: oldest first</option>
+                    <option value="updated_desc">Last Message: newest first</option>
+                  </select>
+                </div>
+                <div class="bulk-buttons">
+                  <button type="button" id="bulk-preview-btn">Preview</button>
+                  <button type="button" id="bulk-preview-clear-btn" hidden>
+                    Clear Preview
+                  </button>
+                  <button type="button" id="bulk-apply-btn">Apply</button>
+                </div>
+                <div id="bulk-result" class="bulk-result" hidden></div>
+                <div id="bulk-error" role="alert" class="labels-form-error" hidden></div>
+              </div>
+            </section>
+
+            <!-- C2. Unfinished Label Runs ─────────────────────────────── -->
+            <section class="labels-section" id="bulk-runs-section">
+              <h3 class="labels-section-title">Unfinished Label Runs</h3>
+              <p class="labels-section-hint">
+                Saved bulk-label runs that have started but aren't finished yet.
+                Criteria are frozen from when the run began and can't be changed
+                here — the only thing you can edit is how many to process in the
+                next batch. Continue always picks up exactly where the run left
+                off in its original ordered set, no matter what labels, tags, or
+                folders those conversations have since had. A finished run moves
+                to Recent Bulk Changes below.
+              </p>
+              <div id="bulk-runs-table-wrap">
+                <table id="bulk-runs-table">
+                  <thead>
+                    <tr>
+                      <th>Criteria</th>
+                      <th>Total qualifying</th>
+                      <th>Completed</th>
+                      <th>Process at a time</th>
+                      <th aria-label="Actions"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="bulk-runs-table-body"></tbody>
+                </table>
+              </div>
+              <div id="bulk-runs-error" role="alert" class="labels-form-error" hidden></div>
+            </section>
+
+            <!-- D. Safety Snapshots / Recent Bulk Changes ─────────────── -->
+            <section class="labels-section">
+              <h3 class="labels-section-title">Safety Snapshots</h3>
+              <p class="labels-section-hint">
+                Manually capture a recoverable snapshot of your labels, folders,
+                tags, titles, pins, and archived/deleted state (never message
+                content). Snapshots are only ever made when you press the button
+                below. Up to 10 are kept.
+              </p>
+              <div class="snapshot-create-row">
+                <input
+                  type="text"
+                  id="snapshot-name"
+                  placeholder="Optional name (a timestamp is used if blank)"
+                  spellcheck="false"
+                  maxlength="120"
+                />
+                <button type="button" id="snapshot-create-btn">Create Snapshot</button>
+              </div>
+              <div id="snapshot-error" role="alert" class="labels-form-error" hidden></div>
+              <div id="snapshot-table-wrap">
+                <table id="snapshot-table">
+                  <thead>
+                    <tr>
+                      <th>Snapshot</th>
+                      <th>Created</th>
+                      <th>Contents</th>
+                      <th>Size</th>
+                      <th aria-label="Actions"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="snapshot-table-body"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="labels-section">
+              <h3 class="labels-section-title">Recent Bulk Changes</h3>
+              <p class="labels-section-hint">
+                Your recent bulk-label operations. Use Again loads a change's
+                criteria back into the tool above (you still Preview and Apply).
+                This is a reminder of what you did, not an undo — recovery is
+                what Safety Snapshots are for.
+              </p>
+              <div class="bulk-retention-row">
+                <label for="bulk-retention">Keep the last</label>
+                <input type="number" id="bulk-retention" min="0" max="50" value="5" />
+                <span>changes</span>
+              </div>
+              <ul id="bulk-history-list" class="bulk-history-list"></ul>
+            </section>
+          </div>
+        </div>
+        <section id="advanced-results-panel" aria-label="Advanced search results" hidden>
+          <div id="advanced-results-resize" class="advanced-results-resize" title="Drag to resize search results"></div>
+          <div class="advanced-results-toolbar">
+            <div class="advanced-results-summary">
+              <strong id="advanced-results-count">Search Results</strong>
+              <span id="advanced-results-status" role="status" aria-live="polite"></span>
+            </div>
+            <div class="advanced-results-actions">
+              <label>Sort <select id="advanced-sort"><option value="newest">Newest</option><option value="oldest">Oldest</option><option value="matches">Most Matches</option></select></label>
+              <label>View <select id="advanced-result-view"><option value="default" selected>Default</option><option value="compact">Compact</option><option value="detailed">Detailed</option></select></label>
+              <button type="button" id="advanced-list-models" class="advanced-toolbar-chip" aria-pressed="false">List Conversation Models</button>
+              <button type="button" id="advanced-results-up" class="advanced-icon-button" title="Expand search results" aria-label="Expand search results">
+                <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M296-224 240-280l240-240 240 240-56 56-184-184-184 184Zm0-240-56-56 240-240 240 240-56 56-184-184-184 184Z" /></svg>
+              </button>
+              <button type="button" id="advanced-results-down" class="advanced-icon-button" title="Minimize search results" aria-label="Minimize search results">
+                <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M480-200 240-440l56-56 184 184 184-184 56 56-240 240Zm0-240L240-680l56-56 184 184 184-184 56 56-240 240Z" /></svg>
+              </button>
+            </div>
+          </div>
+          <div id="advanced-results-list" class="advanced-results-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <!-- Unsaved summary changes dialog -->
+    <!-- Insert Link popup for the Scratch Pad toolbar (scratchpads.js). A small
+         floating panel by the link button, not a full-screen dialog. -->
+    <div id="scratchpad-link-popup" class="scratchpad-popup" role="dialog" aria-labelledby="scratchpad-link-popup-title" hidden>
+      <div class="scratchpad-popup-head">
+        <h2 class="scratchpad-popup-title" id="scratchpad-link-popup-title">Insert Link</h2>
+        <button type="button" class="scratchpad-icon-btn" id="scratchpad-link-popup-close" title="Cancel" aria-label="Cancel inserting a link">
+          <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/></svg>
+        </button>
+      </div>
+      <input id="scratchpad-link-input" class="scratchpad-popup-input" type="text" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="scratchpad-link-options" autocomplete="off" spellcheck="false" placeholder="Search conversations, bookmarks, or paste a link..." aria-label="Search conversations, bookmarks, or paste a link" />
+      <div id="scratchpad-link-options" class="scratchpad-options" role="listbox" aria-label="Link suggestions"></div>
+      <div id="scratchpad-link-note" class="scratchpad-popup-note" role="status" aria-live="polite"></div>
+      <button type="button" id="scratchpad-link-advanced" class="scratchpad-advanced-btn">
+        <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-400q75 0 127.5-52.5T560-580q0-75-52.5-127.5T380-760q-75 0-127.5 52.5T200-580q0 75 52.5 127.5T380-400Z"/></svg>
+        <span>Advanced Search</span>
+        <!-- Google Material Symbols: north_east -->
+        <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="m216-160-56-56 464-464H360v-80h400v400h-80v-264L216-160Z"/></svg>
+      </button>
+    </div>
+
+    <!-- Add to Scratch Pad destination picker (conversation header link button
+         and bookmark ⋮ menus). -->
+    <div id="scratchpad-picker" class="scratchpad-popup" role="dialog" aria-labelledby="scratchpad-picker-title" hidden>
+      <div class="scratchpad-popup-head">
+        <h2 class="scratchpad-popup-title" id="scratchpad-picker-title">Add to Scratch Pad</h2>
+        <button type="button" class="scratchpad-icon-btn" id="scratchpad-picker-close" title="Cancel" aria-label="Cancel adding to a Scratch Pad">
+          <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/></svg>
+        </button>
+      </div>
+      <div id="scratchpad-picker-choose">
+        <input id="scratchpad-picker-input" class="scratchpad-popup-input" type="text" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="scratchpad-picker-options" autocomplete="off" placeholder="Search Scratch Pads…" aria-label="Search Scratch Pads" />
+        <div id="scratchpad-picker-options" class="scratchpad-options" role="listbox" aria-label="Scratch Pads"></div>
+      </div>
+      <form id="scratchpad-picker-create" class="scratchpad-picker-create" hidden>
+        <label for="scratchpad-picker-new-title" class="scratchpad-popup-label">New Scratch Pad title</label>
+        <input id="scratchpad-picker-new-title" class="scratchpad-popup-input" type="text" maxlength="200" autocomplete="off" placeholder="Untitled Scratch Pad" />
+        <div class="scratchpad-picker-create-actions">
+          <button type="button" id="scratchpad-picker-create-cancel" class="summary-btn">Back</button>
+          <button type="submit" id="scratchpad-picker-create-ok" class="summary-btn summary-btn-primary">Create and Add</button>
+        </div>
+      </form>
+      <div id="scratchpad-picker-note" class="scratchpad-popup-note" role="status" aria-live="polite"></div>
+    </div>
+
+    <!-- Plain-language notice for a server call that failed (api.js). -->
+    <div id="app-notice" class="app-notice" role="alert" hidden>
+      <span id="app-notice-text"></span>
+      <button type="button" id="app-notice-close" class="app-notice-close" title="Dismiss" aria-label="Dismiss">
+        <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/></svg>
+      </button>
+    </div>
+
+    <!-- Small confirmation after adding to or copying for a Scratch Pad. -->
+    <div id="scratchpad-toast" class="scratchpad-toast" hidden>
+      <span id="scratchpad-toast-text" role="status" aria-live="polite"></span>
+      <button type="button" id="scratchpad-toast-action" class="scratchpad-toast-action" hidden>View Scratch Pad</button>
+      <button type="button" id="scratchpad-toast-close" class="scratchpad-icon-btn" title="Dismiss" aria-label="Dismiss">
+        <svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/></svg>
+      </button>
+    </div>
+
+    <div id="summary-unsaved-modal" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="summary-unsaved-title">
+        <div class="modal-title" id="summary-unsaved-title">You have unsaved changes. Save before leaving?</div>
+        <div class="modal-buttons">
+          <button id="summary-unsaved-cancel" data-dialog-cancel class="modal-btn">Cancel</button>
+          <button id="summary-unsaved-save" class="modal-btn modal-btn-primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <!-- Unsaved full Notes changes dialog; side-panel Notes autosave. -->
+    <div id="notes-unsaved-modal" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="notes-unsaved-title">
+        <h2 id="notes-unsaved-title">Save changes to Notes?</h2>
+        <div class="modal-actions">
+          <button id="notes-unsaved-cancel" data-dialog-cancel class="modal-btn">Cancel</button>
+          <button id="notes-unsaved-save" class="modal-btn modal-btn-primary">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reusable naming dialog: create folder, rename chat, rename folder -->
+    <div id="name-modal" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="name-modal-title">
+        <div class="modal-title" id="name-modal-title">Rename</div>
+        <input
+          id="name-modal-input" aria-labelledby="name-modal-title"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="modal-buttons">
+          <button id="name-modal-cancel" data-dialog-cancel class="modal-btn">Cancel</button>
+          <button id="name-modal-ok" class="modal-btn modal-btn-primary">
+            Okay
+          </button>
+        </div>
+      </div>
+    </div>
+    <!-- Add to Folder (Advanced Search result menu): pick a folder. -->
+    <div id="folder-pick-modal" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="folder-pick-label">
+        <div class="folder-pick-row">
+          <label id="folder-pick-label" for="folder-pick-select">Folders</label>
+          <select id="folder-pick-select"></select>
+        </div>
+        <div class="modal-buttons">
+          <button id="folder-pick-cancel" class="modal-btn" data-dialog-cancel>Cancel</button>
+          <button id="folder-pick-ok" class="modal-btn modal-btn-primary">Okay</button>
+        </div>
+      </div>
+    </div>
+    <!-- Generic confirmation dialog (used for permanent deletion). -->
+    <div id="confirm-modal" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title" aria-describedby="confirm-modal-text">
+        <div class="modal-title" id="confirm-modal-title">Are you sure?</div>
+        <div class="modal-text" id="confirm-modal-text"></div>
+        <div class="modal-buttons">
+          <button id="confirm-modal-cancel" data-dialog-cancel data-dialog-initial-focus class="modal-btn">Cancel</button>
+          <button id="confirm-modal-ok" class="modal-btn modal-btn-danger">
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+    <!-- Related Conversations: confirm removing a link (related.js). -->
+    <div id="unlink-modal" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="unlink-modal-title">
+        <div class="modal-title" id="unlink-modal-title">Permanently Remove this link?</div>
+        <div class="modal-buttons">
+          <button id="unlink-modal-cancel" data-dialog-cancel data-dialog-initial-focus class="modal-btn">Cancel</button>
+          <button id="unlink-modal-ok" class="modal-btn modal-btn-danger">Okay</button>
+        </div>
+        <label class="modal-check">
+          <input type="checkbox" id="unlink-modal-skip" />
+          <span>Do not show this warning anymore for this session.</span>
+        </label>
+      </div>
+    </div>
+    <!-- Snapshot restore: choose which metadata categories to restore. -->
+    <div id="snapshot-restore-modal" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="snapshot-restore-title" aria-describedby="snapshot-restore-text">
+        <div class="modal-title" id="snapshot-restore-title">Restore snapshot</div>
+        <div class="modal-text" id="snapshot-restore-text">
+          Choose which metadata categories to restore. Only the selected
+          categories are returned to their recorded state — this can reverse
+          changes made since the snapshot. Conversation content is never touched.
+        </div>
+        <div id="snapshot-restore-cats" class="snapshot-cats"></div>
+        <div class="modal-buttons">
+          <button id="snapshot-restore-cancel" data-dialog-cancel class="modal-btn">Cancel</button>
+          <button id="snapshot-restore-ok" class="modal-btn modal-btn-primary">
+            Restore
+          </button>
+        </div>
+      </div>
+    </div>
+    <!-- Caution sign: the selected model is outside its reported availability -->
+    <div id="verify-model-modal" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-label="Model availability warning" aria-describedby="verify-model-text">
+        <div class="modal-text" id="verify-model-text">
+          The selected model is currently outside of the reported model
+          availability time frame. Remove warning for possible wrong model
+          permanently?
+        </div>
+        <div class="modal-buttons">
+          <button id="verify-model-no" data-dialog-cancel class="modal-btn">No</button>
+          <button id="verify-model-yes" class="modal-btn modal-btn-primary">
+            Yes
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Report icon: the selected models do not cover the whole conversation -->
+    <div id="coverage-modal" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-label="Conversation model coverage" aria-describedby="coverage-text">
+        <div class="modal-text" id="coverage-text">
+          Model unavailable during entire conversation dates.
+        </div>
+        <div class="modal-buttons">
+          <button id="coverage-dismiss" class="modal-btn">Dismiss</button>
+          <button id="coverage-okay" data-dialog-cancel data-dialog-initial-focus class="modal-btn modal-btn-primary">
+            Okay
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/static/api.js"></script>
+    <script src="/static/accessibility.js"></script>
+    <script src="/static/gizmos.js"></script>
+    <script src="/static/app.js"></script>
+    <!-- Labeling feature modules: loaded after app.js, whose shared state and
+         helpers they rely on. Order among these three does not matter. -->
+    <script src="/static/labels_screen.js"></script>
+    <script src="/static/bulk_labels.js"></script>
+    <script src="/static/snapshots.js"></script>
+    <script src="/static/summary_editor_core.js"></script>
+    <script src="/static/internal_links.js"></script>
+    <script src="/static/summary.js"></script>
+    <script src="/static/notes.js"></script>
+    <script src="/static/bookmarks.js"></script>
+    <script src="/static/bookmarks_hub.js"></script>
+    <script src="/static/advanced_search.js"></script>
+    <script src="/static/related.js"></script>
+    <script src="/static/scratchpads.js"></script>
+    <script src="/static/vendor/katex/katex.min.js"></script>
+    <script src="/static/vendor/katex/contrib/auto-render.min.js"></script>
+  </body>
+</html>

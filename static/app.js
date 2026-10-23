@@ -1,0 +1,7370 @@
+"use strict";
+
+// Read visual defaults from the shared theme; JS supplies only user choices and
+// measured geometry. Keep these helpers before initial state construction.
+function themeValue(name, element = document.documentElement) {
+  return getComputedStyle(element).getPropertyValue(name).trim();
+}
+function themePixels(name, element = document.documentElement) {
+  return Number.parseFloat(themeValue(name, element));
+}
+function setLabelColor(element, color) {
+  // Label colours are saved user data, not part of the UI theme palette.
+  element.style.setProperty("--label-color", _validHexColor(color) ? color : themeValue("--label-fallback-color"));
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
+const state = {
+  q: "",
+  offset: 0,
+  total: 0,
+  activeId: null,
+  view: "recent",
+  activeSpecialView: null,
+  mediaHub: {
+    data: null,
+    activeSectionKey: "images",
+  },
+  pinnedIds: new Set(),
+  folders: [],
+  folderOf: new Map(), // conversation_id -> folder_id (for chats inside folders)
+  tabs: [], // Compare items only
+  activeTabId: null,
+  lastConversationId: null, // for returning from a special view
+  activeProvider: null, // provider of the open conversation
+  // The open conversation's own pin/folder state (set on open), authoritative
+  // even for a Compare item from the provider not shown in the sidebar.
+  activePinned: false,
+  activeFolderId: null,
+  activeFolderPinned: false,
+  preferences: {
+    sidebarCollapsed: false,
+    sidebarWidth: themePixels("--sidebar-width-default"),
+    conversationView: "recent",
+    searchHistory: [],
+    // Conversation labels feature. Off by default; when off no label control
+    // renders anywhere, but the underlying label data is left untouched.
+    labelsEnabled: false,
+    labelDisplay: "square", // "square" | "square_label"
+    includeCondensedSummary: false,
+    showSummaryHints: true,
+    showSummaryAuthor: false,
+    autoOpenNotesPanel: false,
+    // Chat Snippet in sidebar rows and Labels in the chat header. Default
+    // state only applies when the user has not chosen otherwise (the loaded
+    // preference overwrites these on startup, and the choice persists).
+    showChatSnippet: false,
+    showHeaderLabels: false,
+  },
+  labelRows: [], // label definitions (shared by the Labels screen and squares)
+  // While the bulk tool's Preview is on, the conversation list is temporarily
+  // filtered to the batch the criteria select: {crit, data}. Cleared by Exit
+  // preview, by changing view/search, and after an Apply.
+  bulkPreview: null,
+  activeLabels: [], // the open conversation's labels ([{id,name,color}, …])
+  // The open conversation's message bookmarks ([{id, seq, name, source}, …]).
+  // Each bookmark's id is stable across renames; the list is replaced whenever
+  // a conversation opens.
+  bookmarks: [],
+  scrollByConversation: {},
+  pageOffsetByConversation: {},
+  // Which side the sidebar toggle shows: "claude" or "chatgpt". Persisted so
+  // reopening the app returns to the side last viewed.
+  providerSide: "claude",
+  // Claude model availability. Everything under here stays inert on a ChatGPT
+  // export, where the whole feature is hidden.
+  datasetFormat: "claude",
+  models: null, // model state for the open conversation
+  modelRows: [], // the Add Claude Models table
+  unverifiedCount: 0,
+  tags: [], // tags on the open conversation
+  allTagsCache: null, // every tag in use, for the add-tag autocomplete
+  moodTags: [], // mood tags on the open conversation (independent of tags)
+  allMoodTagsCache: null, // every mood tag in use, for mood-tag autocomplete
+  // Compare-tab outline colours, per provider. CSS-driven, editable in Settings.
+  compareColors: { chatgpt: themeValue("--compare-chatgpt-default"), claude: themeValue("--compare-claude-default") },
+  importNew: {
+    backups: [], // rows for the import-history table
+    provider: "all", // filter radio
+    sortKey: "imported_at", // default: newest import first
+    sortDir: "desc",
+    busy: false,
+    deletedMode: "skip", // previously-deleted import choice
+    reviewNewMessages: false, // "review chats that have new messages" checkbox
+    review: [], // conversations held aside for review
+    reviewChecked: new Set(), // checked review rows (by conversation id)
+  },
+  // Conversations checked in the Recycle Bin. Selection is by conversation id
+  // and persists as the list is scrolled/loaded-more within the view.
+  recycleSelected: new Set(),
+};
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+
+const searchEl = $("search");
+const searchHistoryListEl = $("search-history-list");
+const simpleSearchPanel = $("simple-search-panel");
+const simpleSearchToggle = $("simple-search-toggle");
+const searchClearBtn = $("search-clear-btn");
+const viewFilterEl = $("view-filter");
+const resultCount = $("result-count");
+const recycleControls = $("recycle-controls");
+const recycleActionEl = $("recycle-action");
+const recycleGoBtn = $("recycle-go");
+const convList = $("conv-list");
+const listSectionTitle = $("list-section-title");
+const foldersSection = $("folders-section");
+const foldersToggle = $("folders-toggle");
+const foldersTree = $("folders-tree");
+const foldersCtxMenu = $("folders-ctx-menu");
+const pinnedSection = $("pinned-section");
+const pinnedList = $("pinned-list");
+const loadMoreWrap = $("load-more-wrap");
+const loadMoreBtn = $("load-more");
+const pinnedRefreshBtn = $("pinned-refresh");
+const pinnedTitleEl = $("pinned-title");
+const pinnedHintEl = $("pinned-hint");
+const sidebarToggleBtn = $("sidebar-toggle");
+const sidebarResizeHandle = $("sidebar-resize");
+const tabsList = $("tabs-list");
+const tabsWrap = $("tabs-wrap");
+const emptyState = $("empty-state");
+const thread = $("thread");
+const threadTitle = $("thread-title");
+const threadHeader = $("thread-header");
+const threadTitlebarLabel = $("thread-titlebar-label");
+const threadCollapseBtn = $("thread-collapse-btn");
+const threadMeta = $("thread-meta");
+const threadTags = $("thread-tags");
+const messagesEl = $("messages");
+const galleryPanel = $("gallery");
+const galleryGrid = $("gallery-grid");
+const memoriesPanel = $("memories-panel");
+const memoriesContent = $("memories-content");
+const memoriesMeta = $("memories-meta");
+const projectsPanel = $("projects-panel");
+const projectsContent = $("projects-content");
+const projectsMeta = $("projects-meta");
+const attReportPanel = $("att-report-panel");
+const attReportContent = $("att-report-content");
+const attReportMeta = $("att-report-meta");
+const importAuditPanel = $("import-audit-panel");
+const errorLogPanel = $("error-log-panel");
+const errorLogContent = $("error-log-content");
+const errorLogStatus = $("error-log-status");
+const gizmosPanel = $("gizmos-panel");
+const claudeModelsPanel = $("claude-models-panel");
+const claudeModelsMenuItem = $("claude-models-menu-item");
+const modelTableBody = $("model-table-body");
+const modelAddForm = $("model-add-form");
+const modelAddError = $("model-add-error");
+const modelReloadBtn = $("model-reload-btn");
+const importAuditContent = $("import-audit-content");
+const importNewPanel = $("import-new-panel");
+const settingsPanel = $("settings-panel");
+const aboutPanel = $("about-panel");
+const labelsPanel = $("labels-panel");
+const summaryBodyPanel = $("summary-body");
+const notesBodyPanel = $("notes-body");
+const artifactPanel = $("artifact-panel");
+const artifactPanelTitle = $("artifact-panel-title");
+const artifactPanelBody = $("artifact-panel-body");
+
+// Temporary sidebar surfaces (Bookmarks, Notes, Related Conversations) form a small visual stack.
+// Whichever one the user opens next rises above the others; closing it reveals
+// the previous surface with its state intact.
+let _sidebarOverlayLayer = 6;
+function raiseSidebarOverlay(element) {
+  if (!element) return;
+  _sidebarOverlayLayer += 1;
+  element.style.setProperty("--sidebar-overlay-layer", String(_sidebarOverlayLayer));
+}
+
+// Notes and Related Conversations open a collapsed sidebar while they cover
+// it. One snapshot of the collapse state is shared and kept until the last of
+// them closes, whatever order they open and close in.
+let _sidebarCollapsedBeforeOverlay = null;
+function expandSidebarForOverlay() {
+  if (_sidebarCollapsedBeforeOverlay === null) {
+    _sidebarCollapsedBeforeOverlay = document.body.classList.contains("sidebar-collapsed");
+  }
+  document.body.classList.remove("sidebar-collapsed");
+}
+function restoreSidebarAfterOverlay() {
+  if (_sidebarCollapsedBeforeOverlay === null) return;
+  const notesOpen = typeof notesSidePanelIsOpen === "function" && notesSidePanelIsOpen();
+  const relatedOpen = typeof relatedPanelIsOpen === "function" && relatedPanelIsOpen();
+  const scratchOpen = typeof scratchPadSidebarIsOpen === "function" && scratchPadSidebarIsOpen();
+  if (notesOpen || relatedOpen || scratchOpen) return;
+  document.body.classList.toggle("sidebar-collapsed", _sidebarCollapsedBeforeOverlay);
+  _sidebarCollapsedBeforeOverlay = null;
+}
+
+// ── Available local files (source/files/) ────────────────────────────────────
+// Maps normalizedName → realFilename. Normalized = lowercase + spaces→underscores.
+const _normName = (s) => s.normalize("NFC").toLowerCase().replace(/ /g, "_");
+let _localFilesMap = new Map(); // normName → realFilename
+async function loadFilesManifest() {
+  try {
+    const d = await apiRequest("/api/files-manifest", {
+      action: "Load file list",
+    });
+    _localFilesMap = new Map((d.files || []).map((f) => [_normName(f), f]));
+  } catch (_) {}
+}
+// Called once at startup (non-blocking)
+loadFilesManifest();
+
+// ── Citation / artifact stripping ────────────────────────────────────────────
+// ChatGPT embeds inline citation markers that its UI renders as numbered
+// superscripts but are meaningless noise in raw text.
+function sanitize(text) {
+  return (
+    text
+      // Private-use citation group: \ue200cite\ue202turn0search0\ue202turn0search1\ue201
+      .replace(/\ue200[\s\S]*?\ue201/g, "")
+      // Orphaned private-use citation chars (\ue200 open, \ue201 close, \ue202 sep)
+      .replace(/[\ue200-\ue202]/g, "")
+      // 【4†source】 style Unicode bracket citations (older export format)
+      .replace(/\u3010[^\u3011]*\u3011/g, "")
+      // Clean up any double spaces left behind
+      .replace(/  +/g, " ")
+      .replace(/ ([.,;!?])/g, "$1")
+  );
+}
+
+// ── Markdown renderer ─────────────────────────────────────────────────────────
+// Lightweight renderer — no external deps, works offline.
+
+const md = (() => {
+  const esc = (s) =>
+    String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  function sanitizeHref(rawHref) {
+    const href = String(rawHref || "").trim();
+    if (!href) return "";
+    if (/^(https?:|mailto:)/i.test(href)) return href;
+    if (/^(\/|#|\.\.?\/)/.test(href)) return href;
+    return "";
+  }
+
+  // Inline formatting applied after HTML-escaping the raw text
+  function inline(raw) {
+    let s = esc(raw);
+    // Double backtick before single to handle ``code``
+    s = s.replace(/``([^`\n]+?)``/g, (_, c) => `<code>${c}</code>`);
+    s = s.replace(/`([^`\n]+?)`/g, (_, c) => `<code>${c}</code>`);
+    s = s.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");
+    s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/__(.+?)__/g, "<strong>$1</strong>");
+    s = s.replace(/\*([^*\n]+?)\*/g, "<em>$1</em>");
+    // Only trigger _italic_ at non-word boundaries to avoid mangling variable_names
+    s = s.replace(/(?<!\w)_([^_\n]+?)_(?!\w)/g, "<em>$1</em>");
+    s = s.replace(/~~(.+?)~~/g, "<del>$1</del>");
+    s = s.replace(
+      /!\[([^\]]*)\]\(([^)]+)\)/g,
+      (_, alt, src) => {
+        if (/^(?:https?:)?\/\//i.test(src)) {
+          return `<button type="button" class="summary-btn" data-remote-image="${src}" data-image-alt="${alt}" title="${src}">Load external image: ${alt || "image"} (contacts its website)</button>`;
+        }
+        if (!/^\/(?!\/)(?:source|files|chatfiles)\//.test(src)) return alt;
+        return `<img src="${src}" alt="${alt}">`;
+      },
+    );
+    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, href) => {
+      const safeHref = sanitizeHref(href);
+      if (!safeHref) return text;
+      return `<a href="${esc(safeHref)}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+    });
+    return s;
+  }
+
+  // ── Nested list parser ──────────────────────────────────────────────────────
+  // Returns [htmlString, nextLineIndex]. Handles arbitrary nesting depth,
+  // task-list checkboxes, and mixed ordered/unordered sub-lists.
+  function parseListItems(lines, startIdx) {
+    const baseIndent = lines[startIdx].search(/\S/);
+    const items = [];
+    let i = startIdx;
+
+    while (i < lines.length) {
+      const raw = lines[i];
+      if (!raw.trim()) {
+        i++;
+        continue;
+      } // skip blank lines within a list
+
+      const indent = raw.search(/\S/);
+      if (indent < baseIndent) break; // de-dented past our level → stop
+      if (indent > baseIndent) {
+        i++;
+        continue;
+      } // deeper line already consumed
+
+      const ulM = raw.match(/^[ \t]*[*\-+] (.*)/);
+      const olM = raw.match(/^[ \t]*\d+[.)]\s+(.*)/);
+      if (!ulM && !olM) break; // not a list item at this indent → stop
+
+      let content = (ulM || olM)[1];
+
+      // Task-list checkbox
+      let prefix = "";
+      const tm = content.match(/^\[([ xX])\] (.*)/);
+      if (tm) {
+        const checked = tm[1].toLowerCase() === "x";
+        prefix = `<input type="checkbox" aria-label="${escHtml(tm[2])}" disabled${checked ? " checked" : ""}> `;
+        content = tm[2];
+      }
+
+      i++;
+
+      // Look ahead: if next non-empty line is a deeper list item, recurse
+      let subHtml = "";
+      if (i < lines.length && lines[i].trim()) {
+        const nextIndent = lines[i].search(/\S/);
+        const isNestedList =
+          /^[ \t]*[*\-+] /.test(lines[i]) || /^[ \t]*\d+[.)]\s/.test(lines[i]);
+        if (isNestedList && nextIndent > baseIndent) {
+          const isSubOl = /^[ \t]*\d+[.)]\s/.test(lines[i]);
+          const [subItems, newI] = parseListItems(lines, i);
+          subHtml = `<${isSubOl ? "ol" : "ul"}>${subItems}</${isSubOl ? "ol" : "ul"}>`;
+          i = newI;
+        }
+      }
+
+      items.push(`<li>${prefix}${inline(content)}${subHtml}</li>`);
+    }
+
+    return [items.join(""), i];
+  }
+
+  function processBlock(src) {
+    if (!src.trim()) return "";
+    const html = [];
+    const lines = src.split("\n");
+    let i = 0;
+
+    while (i < lines.length) {
+      const line = lines[i];
+
+      // Blank line
+      if (!line.trim()) {
+        html.push("");
+        i++;
+        continue;
+      }
+
+      // ATX heading
+      const hm = line.match(/^(#{1,6})\s+(.*)/);
+      if (hm) {
+        html.push(`<h${hm[1].length}>${inline(hm[2])}</h${hm[1].length}>`);
+        i++;
+        continue;
+      }
+
+      // Horizontal rule
+      if (/^[-*_]{3,}\s*$/.test(line)) {
+        html.push("<hr>");
+        i++;
+        continue;
+      }
+
+      // Blockquote (with or without space after >)
+      if (/^> ?/.test(line)) {
+        const lines2 = [];
+        while (i < lines.length && /^> ?/.test(lines[i])) {
+          lines2.push(inline(lines[i].replace(/^> ?/, "")));
+          i++;
+        }
+        html.push(`<blockquote><p>${lines2.join("<br>")}</p></blockquote>`);
+        continue;
+      }
+
+      // Unordered list
+      if (/^[*\-+] /.test(line)) {
+        const [items, newI] = parseListItems(lines, i);
+        html.push(`<ul>${items}</ul>`);
+        i = newI;
+        continue;
+      }
+
+      // Ordered list — preserve start number for lists that begin at non-1
+      if (/^\d+[.)]\s/.test(line)) {
+        const startNum = parseInt(line.match(/^(\d+)/)[1], 10);
+        const [items, newI] = parseListItems(lines, i);
+        const startAttr = startNum !== 1 ? ` start="${startNum}"` : "";
+        html.push(`<ol${startAttr}>${items}</ol>`);
+        i = newI;
+        continue;
+      }
+
+      // GFM table: header row followed by separator row (| :--- | --- | ---: |)
+      if (
+        line.startsWith("|") &&
+        i + 1 < lines.length &&
+        /^\|[\s\-:|]+\|/.test(lines[i + 1])
+      ) {
+        const parseCells = (ln) => {
+          const parts = ln.split("|");
+          if (parts[0].trim() === "") parts.shift();
+          if (parts.length && parts[parts.length - 1].trim() === "")
+            parts.pop();
+          return parts.map((c) => c.trim());
+        };
+        const headers = parseCells(line);
+        i++; // skip to separator
+        const aligns = parseCells(lines[i]).map((s) => {
+          if (s.startsWith(":") && s.endsWith(":")) return "center";
+          if (s.endsWith(":")) return "right";
+          return "left";
+        });
+        i++; // skip to first data row
+        const rows = [];
+        while (
+          i < lines.length &&
+          lines[i].trim() &&
+          lines[i].startsWith("|")
+        ) {
+          rows.push(parseCells(lines[i]));
+          i++;
+        }
+        const thCells = headers
+          .map(
+            (h, j) =>
+              `<th class="md-align-${aligns[j] || "left"}">${inline(h)}</th>`,
+          )
+          .join("");
+        const bodyRows = rows
+          .map(
+            (r) =>
+              `<tr>${r.map((c, j) => `<td class="md-align-${aligns[j] || "left"}">${inline(c)}</td>`).join("")}</tr>`,
+          )
+          .join("");
+        html.push(
+          `<div class="table-wrap"><table><thead><tr>${thCells}</tr></thead><tbody>${bodyRows}</tbody></table></div>`,
+        );
+        continue;
+      }
+
+      // Paragraph — collect consecutive "normal" lines
+      const para = [];
+      while (
+        i < lines.length &&
+        lines[i].trim() &&
+        !lines[i].startsWith("|") &&
+        !/^[*\-+] /.test(lines[i]) &&
+        !/^\d+[.)]\s/.test(lines[i]) &&
+        !/^#{1,6}\s/.test(lines[i]) &&
+        !/^> ?/.test(lines[i]) &&
+        !/^[-*_]{3,}\s*$/.test(lines[i])
+      ) {
+        para.push(lines[i]);
+        i++;
+      }
+      if (para.length) {
+        // If the paragraph contains box-drawing or 2+ arrow/diagram chars,
+        // render as <pre> (monospace) to preserve alignment.
+        const combined = para.join("\n");
+        const isPreformatted =
+          /[─━│┃┄┅┆┇┈┉┊┋┌┍┎┏┐┑┒┓└┕┖┗┘┙┚┛├┝┞┟┠┡┢┣┤┥┦┧┨┩┪┫┬┭┮┯┰┱┲┳┴┵┶┷┸┹┺┻┼┽┾┿╀╁╂╃╄╅╆╇╈╉╊╋╌╍╎╏═║╒╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡╢╣╤╥╦╧╨╩╪╫╬]/.test(
+            combined,
+          ) ||
+          // Only treat as diagram if arrows have whitespace around them (diagram style)
+          // e.g. "A → B" matches but an arrow inside prose does not
+          (combined.match(/(?:^|[ \t])[←→↑↓↔↕⇐⇒⇑⇓⇔⇕⟵⟶⟷](?=[ \t]|$)/gm) || [])
+            .length >= 2;
+        if (isPreformatted) {
+          html.push(`<pre class="plaintext">${esc(combined)}</pre>`);
+        } else {
+          html.push(`<p>${para.map((l) => inline(l)).join("<br>")}</p>`);
+        }
+      } else {
+        // Fallback: line matched no block rule (e.g. orphan | line from a
+        // multiline table cell). Render as text and advance to prevent an
+        // infinite loop.
+        html.push(`<p>${inline(lines[i])}</p>`);
+        i++;
+      }
+    }
+    return html.join("\n");
+  }
+
+  // Protect math from markdown mangling (applied per text segment, not code)
+  function protectMath(text, protect) {
+    return (
+      text
+        // Bare LaTeX environments: \begin{align}...\end{align} etc.
+        .replace(/\\begin\{([^}]+)\}[\s\S]*?\\end\{\1\}/g, (raw) =>
+          protect(raw),
+        )
+        // Display math: $$ and \[
+        .replace(/\$\$([\s\S]+?)\$\$/g, (_, m) => protect(`$$${m}$$`))
+        .replace(/\\\[([\s\S]+?)\\\]/g, (_, m) => protect(`\\[${m}\\]`))
+        // Inline math: \( and single $
+        .replace(/\\\([\s\S]*?\\\)/g, (raw) => protect(raw))
+        .replace(/(?<![\\$])\$([^$\n]+?)\$(?!\$)/g, (_, m) => protect(`$${m}$`))
+    );
+  }
+
+  return function render(src) {
+    if (!src) return "";
+
+    // Stash for math placeholders — restored after markdown processing
+    const stash = [];
+    const protect = (raw) => {
+      stash.push(raw);
+      return `\x02${stash.length - 1}\x03`;
+    };
+
+    const out = [];
+    // Language names can include +, #, -, . (e.g. c++, c#, html+css, .env)
+    const FENCE = /^```([^\n`]*)\n([\s\S]*?)^```/gm;
+    let last = 0,
+      m;
+
+    // Extract code fences FIRST so math inside code is never stashed
+    while ((m = FENCE.exec(src)) !== null) {
+      out.push(processBlock(protectMath(src.slice(last, m.index), protect)));
+      const lang = m[1].trim();
+      const code = m[2].replace(/\n$/, ""); // strip trailing newline before closing ```
+      const copyBtn = `<button class="copy-btn" title="Copy code" aria-label="Copy code">
+        <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
+          <rect x="4" y="4" width="9" height="11" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+          <path d="M3 3H2a1 1 0 00-1 1v9a1 1 0 001 1h8a1 1 0 001-1v-1" stroke="currentColor" stroke-width="1.3"/>
+        </svg>
+      </button>`;
+      out.push(
+        `<pre${lang ? ` data-lang="${esc(lang)}"` : ""}>${copyBtn}<code>${esc(code)}</code></pre>`,
+      );
+      last = m.index + m[0].length;
+    }
+    out.push(processBlock(protectMath(src.slice(last), protect)));
+
+    // Restore math placeholders — KaTeX will render them via renderMathInElement.
+    // A stash can hold another (\begin…\end inside $$…$$), so the raw text is
+    // put back whole first, then escaped once like any other text: KaTeX
+    // reads the text, so math still renders, and "$5 <img onerror=…> $10"
+    // stays text (AUDIT.md #2).
+    const raw = (s) => s.replace(/\x02(\d+)\x03/g, (_, i) => raw(stash[+i]));
+    return out.join("\n").replace(/\x02(\d+)\x03/g, (_, i) => esc(raw(stash[+i])));
+  };
+})();
+
+// Consent is per image, never a background request or a saved global setting.
+document.addEventListener("click", event => {
+  const button = event.target.closest?.("button[data-remote-image]");
+  if (!button) return;
+  let url;
+  try { url = new URL(button.dataset.remoteImage, location.href); }
+  catch (_) { showAppNotice("This image has an invalid address."); return; }
+  if (!["https:", "http:"].includes(url.protocol)) return;
+  const img = document.createElement("img");
+  img.referrerPolicy = "no-referrer";
+  img.alt = button.dataset.imageAlt || "External image";
+  img.addEventListener("error", () => {
+    img.replaceWith(button);
+    showAppNotice("The external image couldn't be loaded. You can try again.");
+  }, { once: true });
+  img.src = url.href;
+  button.replaceWith(img);
+});
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+// Also escapes quotes: some callers put the result inside an attribute.
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function formatDate(ts) {
+  if (!ts || !Number.isFinite(Number(ts))) return "";
+  const d = new Date(ts * 1000);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const diffMs = now - d;
+  const diffDays = diffMs / 86_400_000;
+
+  if (diffDays < 1)
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (diffDays < 7)
+    return d.toLocaleDateString([], {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+  if (diffDays < 365)
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  return d.toLocaleDateString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+// Per-message metadata timestamp, e.g. "January 11, 2026 1:00 PM"
+function formatMessageTime(ts) {
+  if (!ts || !Number.isFinite(Number(ts))) return "";
+  const d = new Date(ts * 1000);
+  if (Number.isNaN(d.getTime())) return "";
+  return (
+    d.toLocaleDateString("en-US", {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    }) +
+    " " +
+    d.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    })
+  );
+}
+
+// ── File icon helper ──────────────────────────────────────────────────────────
+
+function fileIcon(typeOrName) {
+  const t = (typeOrName || "").toLowerCase();
+  if (t.includes("pdf")) return "📄";
+  if (t.match(/jpe?g|png|gif|webp|bmp|svg|heic/)) return "🖼️";
+  if (t.match(/docx?|doc/)) return "📝";
+  if (t.match(/xlsx?|csv/)) return "📊";
+  if (t.match(/zip|tar|gz/)) return "🗜️";
+  if (t.match(/mp[34]|mov|avi/)) return "🎬";
+  return "📎";
+}
+
+// ── File content side panel ───────────────────────────────────────────────────
+
+let _filePanelEl = null;
+
+// ── In-thread search navigation state ────────────────────────────────────────
+let _searchMatches = []; // [{seq, role}, ...]
+let _searchMatchIdx = 0;
+
+// Remove search nav bar and all in-thread highlights — call whenever search ends.
+function clearSearchNav() {
+  const bar = document.getElementById("search-nav-bar");
+  if (bar) bar.remove();
+  _searchMatches = [];
+  _searchMatchIdx = 0;
+  messagesEl
+    .querySelectorAll(".msg-search-match, .msg-search-current")
+    .forEach((el) =>
+      el.classList.remove("msg-search-match", "msg-search-current"),
+    );
+  messagesEl.querySelectorAll("mark.search-term-highlight").forEach((mark) => {
+    mark.replaceWith(document.createTextNode(mark.textContent));
+  });
+}
+
+async function buildSearchNavBar(convId, q, targetSeq = null) {
+  clearSearchNav();
+  if (!q) return;
+
+  let matches = [];
+  try {
+    const data = await apiRequest(
+      `/api/search-in-conversation?conv_id=${encodeURIComponent(convId)}&q=${encodeURIComponent(q)}`,
+      { action: "Find matches in conversation" },
+    );
+    matches = data.matches || [];
+  } catch (_) {}
+
+  if (convId !== state.activeId || q !== state.q || state.activeSpecialView) return;
+  _searchMatches = matches;
+  _searchMatchIdx = 0;
+  if (!matches.length) return;
+
+  // Highlight all matching message divs
+  for (const m of matches) {
+    const el = messagesEl.querySelector(`[data-seq="${m.seq}"]`);
+    if (el) el.classList.add("msg-search-match");
+  }
+
+  // Build nav bar and insert above #messages inside #thread
+  const navBar = document.createElement("div");
+  navBar.id = "search-nav-bar";
+  navBar.innerHTML = `
+    <span id="search-nav-term">"${escHtml(q)}"</span>
+    <span id="search-nav-count">${matches.length} messages matched</span>
+    <button id="search-nav-prev" title="Previous">↑</button>
+    <span id="search-nav-pos">1/${matches.length}</span>
+    <button id="search-nav-next" title="Next">↓</button>
+    <button id="search-nav-close" title="Close search navigation">✕</button>`;
+  thread.insertBefore(navBar, messagesEl);
+
+  navBar.querySelector("#search-nav-prev").addEventListener("click", () => {
+    _searchMatchIdx =
+      (_searchMatchIdx - 1 + _searchMatches.length) % _searchMatches.length;
+    scrollToSearchMatch(_searchMatchIdx);
+  });
+  navBar.querySelector("#search-nav-next").addEventListener("click", () => {
+    _searchMatchIdx = (_searchMatchIdx + 1) % _searchMatches.length;
+    scrollToSearchMatch(_searchMatchIdx);
+  });
+  navBar.querySelector("#search-nav-close").addEventListener("click", () => {
+    clearSearchNav();
+  });
+
+  // Scroll to first match
+  _searchMatchIdx = Math.max(0, matches.findIndex(m => m.seq === targetSeq));
+  scrollToSearchMatch(_searchMatchIdx);
+}
+
+// Highlight all occurrences of `term` inside a DOM element using text-node walking.
+// Returns an array of <mark> elements added (for later cleanup).
+function highlightTextInEl(el, term) {
+  if (!term) return [];
+  const marks = [];
+  const lower = term.toLowerCase();
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+  const nodesToProcess = [];
+  let node;
+  while ((node = walker.nextNode())) {
+    if (node.nodeValue.toLowerCase().includes(lower)) nodesToProcess.push(node);
+  }
+  for (const textNode of nodesToProcess) {
+    const text = textNode.nodeValue;
+    const ltext = text.toLowerCase();
+    const frag = document.createDocumentFragment();
+    let last = 0,
+      pos;
+    while ((pos = ltext.indexOf(lower, last)) !== -1) {
+      if (pos > last)
+        frag.appendChild(document.createTextNode(text.slice(last, pos)));
+      const mark = document.createElement("mark");
+      mark.className = "search-term-highlight";
+      mark.textContent = text.slice(pos, pos + term.length);
+      frag.appendChild(mark);
+      marks.push(mark);
+      last = pos + term.length;
+    }
+    if (last < text.length)
+      frag.appendChild(document.createTextNode(text.slice(last)));
+    textNode.parentNode.replaceChild(frag, textNode);
+  }
+  return marks;
+}
+
+async function scrollToSearchMatch(idx) {
+  if (!_searchMatches.length) return;
+  const posEl = document.getElementById("search-nav-pos");
+  if (posEl) posEl.textContent = `${idx + 1}/${_searchMatches.length}`;
+
+  const prevBtn = document.getElementById("search-nav-prev");
+  const nextBtn = document.getElementById("search-nav-next");
+  if (prevBtn) prevBtn.disabled = idx === 0;
+  if (nextBtn) nextBtn.disabled = idx === _searchMatches.length - 1;
+
+  // Remove current-message highlight
+  messagesEl
+    .querySelectorAll(".msg-search-current")
+    .forEach((el) => el.classList.remove("msg-search-current"));
+
+  // Remove previous inline text highlights (unwrap <mark> nodes)
+  messagesEl.querySelectorAll("mark.search-term-highlight").forEach((mark) => {
+    mark.replaceWith(document.createTextNode(mark.textContent));
+  });
+
+  const m = _searchMatches[idx];
+  if (!(await ensureConversationMessage(m.seq)) || _searchMatches[idx] !== m || _searchMatchIdx !== idx) return;
+  const el = messagesEl.querySelector(`[data-seq="${m.seq}"]`);
+  if (!el) return;
+
+  el.classList.add("msg-search-current");
+
+  // Highlight matching text inside this message body
+  const bodyEl = el.querySelector(".message-body");
+  if (bodyEl && state.q) {
+    const marks = highlightTextInEl(bodyEl, state.q);
+    // Update count label to show occurrences in this message
+    const countEl = document.getElementById("search-nav-count");
+    if (countEl && marks.length > 0) {
+      countEl.textContent = `${_searchMatches.length} messages · ${marks.length} here`;
+    } else if (countEl) {
+      countEl.textContent = `${_searchMatches.length} messages matched`;
+    }
+    // Scroll first <mark> into view after the container scroll
+    if (marks.length) {
+      setTimeout(() => {
+        marks[0].scrollIntoView({ block: "nearest" });
+      }, 350);
+    }
+  }
+
+  // getBoundingClientRect: works regardless of position/sticky/offsetParent
+  const cRect = messagesEl.getBoundingClientRect();
+  const eRect = el.getBoundingClientRect();
+  const absTop = eRect.top - cRect.top + messagesEl.scrollTop;
+  const target = absTop - (messagesEl.clientHeight - el.offsetHeight) / 2;
+  messagesEl.scrollTo({ top: Math.max(0, target), behavior: preferredScrollBehavior() });
+}
+
+function _ensureFilePanel() {
+  if (_filePanelEl) return _filePanelEl;
+  const panel = document.createElement("div");
+  panel.id = "file-panel";
+  panel.hidden = true;
+  panel.innerHTML = `
+    <div id="file-panel-resize"></div>
+    <div id="file-panel-header">
+      <span id="file-panel-name"></span>
+      <button id="file-panel-close" title="Close">✕</button>
+    </div>
+    <div id="file-panel-body"></div>`;
+  document.getElementById("main").appendChild(panel);
+  panel
+    .querySelector("#file-panel-close")
+    .addEventListener("click", closeFilePanel);
+
+  // ── Drag-to-resize ────────────────────────────────────────────────────────
+  const handle = panel.querySelector("#file-panel-resize");
+  setupResizeHandle(handle, {
+    label: "File preview width", orientation: "vertical", controls: "file-panel", reverse: true,
+    getValue: () => panel.offsetWidth,
+    getBounds: () => [themePixels("--file-panel-min-width"), themePixels("--side-panel-max-width")],
+    setValue: (width) => $("main").style.setProperty("--file-panel-width", `${width}px`),
+  });
+  let dragging = false,
+    startX = 0,
+    startW = 0;
+  handle.addEventListener("mousedown", (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startW = panel.offsetWidth;
+    document.body.classList.add("resizing-columns");
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const delta = startX - e.clientX; // moving left → wider
+    const w = Math.max(themePixels("--file-panel-min-width"), Math.min(themePixels("--side-panel-max-width"), startW + delta));
+    // One width drives the preview and CSS message clearance together.
+    $("main").style.setProperty("--file-panel-width", `${w}px`);
+  });
+  document.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("resizing-columns");
+  });
+
+  _filePanelEl = panel;
+  return panel;
+}
+
+function openFilePanel(att) {
+  closeArtifactPanel(); // mutual exclusion — only one side panel at a time
+  const panel = _ensureFilePanel();
+  panel.querySelector("#file-panel-name").textContent = att.name;
+  const body = panel.querySelector("#file-panel-body");
+  body.innerHTML = md(att.content);
+  panel.hidden = false;
+  document.getElementById("thread").classList.add("with-file-panel");
+  // Shared width variables keep the panel and message clearance in sync.
+}
+
+function closeFilePanel() {
+  if (_filePanelEl) _filePanelEl.hidden = true;
+  document.getElementById("thread").classList.remove("with-file-panel");
+}
+
+// ── Month grouping tracking ───────────────────────────────────────────────────
+let _lastSeenMonth = null;
+
+function _monthLabel(ts) {
+  if (!ts) return null;
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "long" });
+}
+
+// ── File chip helpers ─────────────────────────────────────────────────────────
+
+function wireCodeCopy(root) {
+  root.querySelectorAll("pre .copy-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const code = btn.closest("pre").querySelector("code");
+      navigator.clipboard.writeText(code.innerText).then(() => {
+        btn.classList.add("copied");
+        setTimeout(() => btn.classList.remove("copied"), 1800);
+      });
+    });
+  });
+}
+
+const _IMAGE_EXTS = new Set([
+  "jpg",
+  "jpeg",
+  "png",
+  "gif",
+  "webp",
+  "bmp",
+  "svg",
+  "heic",
+  "heif",
+]);
+
+function _fileUrl(att) {
+  if (!att.name) return null;
+  // Normalize: lowercase + spaces→underscores to match downloaded filenames
+  const norm = _normName(att.name);
+  const realName = _localFilesMap.get(norm);
+  if (realName) return "/files/" + encodeURIComponent(realName);
+  return null;
+}
+
+// Returns an <img> element if the attachment is an image available locally,
+// otherwise null.
+function tryInlineImage(att) {
+  const ext = (att.type || "").toLowerCase().replace(/^\./, "");
+  if (!_IMAGE_EXTS.has(ext)) return null;
+  const url = _fileUrl(att);
+  if (!url) return null;
+  const img = document.createElement("img");
+  img.src = url;
+  img.alt = att.name;
+  img.className = "inline-image";
+  img.loading = "lazy";
+  makeKeyboardAction(img, `Open image ${att.name}`);
+  // Open lightbox on click
+  img.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openImageLightbox(url, att.name);
+  });
+  return img;
+}
+
+function openImageLightbox(url, name) {
+  let lb = document.getElementById("img-lightbox");
+  if (!lb) {
+    lb = document.createElement("div");
+    lb.id = "img-lightbox";
+    lb.hidden = true;
+    lb.innerHTML = `<div id="img-lightbox-bg"></div>
+      <div id="img-lightbox-content" role="dialog" aria-modal="true" aria-labelledby="img-lightbox-name">
+        <button id="img-lightbox-close" aria-label="Close image" data-dialog-cancel>✕</button>
+        <img id="img-lightbox-img" src="" alt="">
+        <div id="img-lightbox-name"></div>
+      </div>`;
+    document.body.appendChild(lb);
+    lb.querySelector("#img-lightbox-bg").addEventListener("click", () => {
+      lb.hidden = true;
+    });
+    lb.querySelector("#img-lightbox-close").addEventListener("click", () => {
+      lb.hidden = true;
+    });
+  }
+  lb.querySelector("#img-lightbox-img").src = url;
+  lb.querySelector("#img-lightbox-img").alt = name;
+  lb.querySelector("#img-lightbox-name").textContent = name;
+  lb.hidden = false;
+}
+
+function createChipsEl(attachments) {
+  const chipsEl = document.createElement("div");
+  chipsEl.className = "file-chips";
+  for (const att of attachments) {
+    const ext = (att.type || "").toLowerCase().replace(/^\./, "");
+    const isImage = _IMAGE_EXTS.has(ext);
+    const localUrl = _fileUrl(att);
+
+    if (att.content) {
+      // Text / extracted content → open in side panel
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "file-chip";
+      chip.innerHTML = `<span class="chip-icon">${fileIcon(att.type || att.name)}</span><span class="chip-name">${escHtml(att.name)}</span>`;
+      chip.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openFilePanel(att);
+      });
+      chipsEl.appendChild(chip);
+    } else if (isImage && localUrl) {
+      // Image available locally → don't show chip (shown inline already), skip
+      // (chip is only shown when inline rendering fails, handled by caller)
+      continue;
+    } else if (localUrl) {
+      // Non-image file available locally → open in side panel
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "file-chip file-chip-download";
+      chip.title = "Click to view file contents";
+      chip.innerHTML = `<span class="chip-icon">${fileIcon(att.type || att.name)}</span><span class="chip-name">${escHtml(att.name)}</span>`;
+      chip.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        chip.disabled = true;
+        try {
+          const realName = _localFilesMap.get(_normName(att.name)) || att.name;
+          const data = await apiRequest(
+            "/api/file-content?name=" + encodeURIComponent(realName),
+            { action: "Open file" },
+          );
+          if (data.error) {
+            showAppNotice(data.error);
+            return;
+          }
+          openFilePanel({
+            name: att.name,
+            content: data.content || "",
+            type: att.type,
+          });
+        } finally {
+          chip.disabled = false;
+        }
+      });
+      chipsEl.appendChild(chip);
+    } else {
+      // Not available — show unavailable chip with tooltip
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "file-chip file-chip-no-content";
+      const tooltip = isImage
+        ? "Image not included in the Claude export (original file cannot be recovered)"
+        : "File content not included in the Claude export (original file cannot be recovered)";
+      chip.title = tooltip;
+      chip.innerHTML = `<span class="chip-icon">${fileIcon(att.type || att.name)}</span><span class="chip-name">${escHtml(att.name)}</span><span class="chip-unavail">⚠</span>`;
+      chipsEl.appendChild(chip);
+    }
+  }
+  return chipsEl;
+}
+
+// Render inline images for a message's attachments, returns a fragment (may be empty)
+function createInlineImagesEl(attachments) {
+  const wrap = document.createDocumentFragment();
+  for (const att of attachments) {
+    const img = tryInlineImage(att);
+    if (img) {
+      const imgWrap = document.createElement("div");
+      imgWrap.className = "inline-image-wrap";
+      imgWrap.appendChild(img);
+      wrap.appendChild(imgWrap);
+    }
+  }
+  return wrap;
+}
+
+// ── API calls ─────────────────────────────────────────────────────────────────
+
+async function apiConversations(q, offset, signal) {
+  const p = new URLSearchParams({
+    limit: 50,
+    offset,
+    view: state.view,
+    pinned_first: state.view === "recent" ? "1" : "0",
+    provider: state.providerSide,
+  });
+  if (q) p.set("q", q);
+  return apiRequest(`/api/conversations?${p}`, {
+    signal,
+    action: "Load conversation list",
+  });
+}
+
+// The bulk tool's Preview list: the batch the current criteria select, in the
+// order the run would take it, shaped like a normal conversation page so the
+// sidebar renders it unchanged.
+async function apiBulkPreviewList(offset, signal) {
+  return apiRequest("/api/labels/bulk-preview-list", {
+    method: "POST",
+    body: {
+      criteria: state.bulkPreview.crit,
+      limit: 50,
+      offset,
+    },
+    signal,
+    action: "Preview bulk label list",
+  });
+}
+
+async function apiPreferences() {
+  return apiRequest("/api/preferences", { action: "Load settings" });
+}
+
+async function apiUpdatePreferences(preferences) {
+  return apiRequest("/api/preferences", {
+    method: "PATCH",
+    body: { preferences },
+    action: "Save settings",
+  });
+}
+
+async function apiPinnedList() {
+  // Scope pins to the toggled side so the loose Pinned list matches the sidebar.
+  const p = new URLSearchParams({ provider: state.providerSide });
+  return apiRequest(`/api/pinned?${p}`, { action: "Load pinned list" });
+}
+
+async function apiPinConversation(conversationId) {
+  return apiRequest("/api/pinned", {
+    method: "POST",
+    body: { conversation_id: conversationId },
+    action: "Pin conversation",
+  });
+}
+
+async function apiUnpinConversation(conversationId) {
+  return apiRequest(`/api/pinned/${encodeURIComponent(conversationId)}`, {
+    method: "DELETE",
+    action: "Unpin conversation",
+  });
+}
+
+async function apiReorderPinned(ids) {
+  return apiRequest("/api/pinned/reorder", {
+    method: "POST",
+    body: { ids },
+    action: "Reorder pinned conversations",
+  });
+}
+
+async function apiUpdateConversationMeta(conversationId, payload) {
+  return apiRequest(`/api/conversation/${encodeURIComponent(conversationId)}`, {
+    method: "PATCH",
+    body: payload,
+    action: "Change conversation",
+  });
+}
+
+// Bulk Recycle Bin actions. `body` is either { all: true, provider } or
+// { ids: [...], provider }; the server scopes "all" to the given provider so it
+// matches the count the user sees.
+async function apiRecycleRestore(body) {
+  return apiRequest("/api/recycle-bin/restore", {
+    method: "POST",
+    body,
+    action: "Restore from Recycle Bin",
+  });
+}
+async function apiRecyclePurge(body) {
+  return apiRequest("/api/recycle-bin/purge", {
+    method: "POST",
+    body,
+    action: "Empty Recycle Bin",
+  });
+}
+
+async function apiTabs() {
+  return apiRequest("/api/tabs", { action: "Load Compare tabs" });
+}
+
+async function apiCreateTab(payload) {
+  return apiRequest("/api/tabs", {
+    method: "POST",
+    body: payload,
+    action: "Add Compare tab",
+  });
+}
+
+async function apiUpdateTab(id, payload) {
+  return apiRequest(`/api/tabs/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: payload,
+    action: "Change Compare tab",
+  });
+}
+
+async function apiDeleteTab(id) {
+  return apiRequest(`/api/tabs/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    action: "Close Compare tab",
+  });
+}
+
+async function apiSearch(q) {
+  const p = new URLSearchParams({ q, limit: 40, provider: state.providerSide });
+  return apiRequest(`/api/search?${p}`, { action: "Search" });
+}
+
+// The caller shows a failure in the reading pane, so it gets the message back
+// in the shape it checks for instead of a second notice.
+async function apiConversation(id, params = {}) {
+  try {
+    return await apiRequest(`/api/conversation/${encodeURIComponent(id)}?${new URLSearchParams(params)}`, {
+      action: "Open conversation",
+      notify: false,
+    });
+  } catch (err) {
+    if (err.name === "AbortError") throw err;
+    return { error: err.userMessage || API_MESSAGES.load };
+  }
+}
+
+// ── Tags ─────────────────────────────────────────────────────────────────────
+async function apiAllTags() {
+  const data = await apiRequest("/api/tags", { action: "Load tags" });
+  return data.tags || [];
+}
+
+async function apiAddTag(convId, tag) {
+  return apiRequest("/api/tags", {
+    method: "POST",
+    body: { conv_id: convId, tag },
+    action: "Add tag",
+  });
+}
+
+async function apiRemoveTag(convId, tag) {
+  return apiRequest(
+    `/api/tags/${encodeURIComponent(convId)}/${encodeURIComponent(tag)}`,
+    { method: "DELETE", action: "Remove tag" },
+  );
+}
+
+// Mood tags: a second, independent tag set with its own API and vocabulary.
+async function apiAllMoodTags() {
+  const data = await apiRequest("/api/mood-tags", { action: "Load mood tags" });
+  return data.tags || [];
+}
+
+async function apiAddMoodTag(convId, tag) {
+  return apiRequest("/api/mood-tags", {
+    method: "POST",
+    body: { conv_id: convId, tag },
+    action: "Add mood tag",
+  });
+}
+
+async function apiRemoveMoodTag(convId, tag) {
+  return apiRequest(
+    `/api/mood-tags/${encodeURIComponent(convId)}/${encodeURIComponent(tag)}`,
+    { method: "DELETE", action: "Remove mood tag" },
+  );
+}
+
+// ── Highlight query terms in a text snippet ───────────────────────────────────
+function highlightSnippet(text, q) {
+  if (!q || !text) return escHtml(text || "");
+  const safe = escHtml(text);
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return safe.replace(new RegExp(escaped, "gi"), (m) => `<mark>${m}</mark>`);
+}
+
+// ── Render full-text search results in sidebar ───────────────────────────────
+function renderSearchResults(results, q) {
+  convList.innerHTML = "";
+  if (!results.length) {
+    convList.innerHTML = '<div class="no-results">No matches</div>';
+    return;
+  }
+  // Group by conv_id
+  const groups = new Map();
+  for (const r of results) {
+    if (!groups.has(r.conv_id))
+      groups.set(r.conv_id, { title: r.conv_title, hits: [] });
+    groups.get(r.conv_id).hits.push(r);
+  }
+  for (const [convId, { title, hits }] of groups) {
+    const groupEl = document.createElement("div");
+    groupEl.className = "search-group";
+    const titleEl = document.createElement("div");
+    titleEl.className = "search-group-title";
+    titleEl.textContent = title;
+    groupEl.appendChild(titleEl);
+    for (const hit of hits) {
+      const hitEl = document.createElement("div");
+      hitEl.className =
+        "search-hit" + (hit.role === "user" ? " search-hit-user" : "");
+      const roleLabel = hit.role === "user" ? "You" : "Claude";
+      hitEl.innerHTML = `<span class="search-hit-role">${roleLabel}</span><span class="search-hit-snippet">${highlightSnippet(hit.snippet, q)}</span>`;
+      makeKeyboardAction(hitEl, `${title}: ${roleLabel}, ${hit.snippet}`);
+      hitEl.addEventListener("click", () =>
+        openConversation(convId, resolveConversationSidebarEl(convId), hit.seq),
+      );
+      groupEl.appendChild(hitEl);
+    }
+    convList.appendChild(groupEl);
+  }
+}
+
+// ── Render conversation list items ────────────────────────────────────────────
+
+// Each chat row now carries a single right-aligned ⋮ button; its menu holds
+// Rename, Compare, Pin, Archive (in that order).
+function buildConvActions(c, openMenu = openConvItemMenu) {
+  const wrap = document.createElement("div");
+  wrap.className = "conv-actions";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "conv-menu-btn";
+  btn.title = "More";
+  btn.setAttribute("aria-label", "More");
+  btn.setAttribute("aria-haspopup", "true");
+  btn.innerHTML =
+    '<svg viewBox="0 0 4 16" width="4" height="16" aria-hidden="true">' +
+    '<circle cx="2" cy="2" r="1.7"/><circle cx="2" cy="8" r="1.7"/>' +
+    '<circle cx="2" cy="14" r="1.7"/></svg>';
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openMenu(c, btn);
+  });
+  wrap.appendChild(btn);
+  return wrap;
+}
+
+// ── Chat-row action menu (shared, floating) ───────────────────────────────────
+let _convMenuEl = null;
+
+function closeConvItemMenu() {
+  if (_convMenuEl) {
+    restoreActionMenuFocus(_convMenuEl);
+    _convMenuEl.remove();
+    _convMenuEl = null;
+    document.removeEventListener("mousedown", onConvMenuOutside, true);
+    document.removeEventListener("keydown", onConvMenuKey, true);
+    window.removeEventListener("scroll", closeConvItemMenu, true);
+  }
+}
+function onConvMenuOutside(e) {
+  if (_convMenuEl && !_convMenuEl.contains(e.target)) closeConvItemMenu();
+}
+function onConvMenuKey(e) {
+  if (e.key === "Escape") closeConvItemMenu();
+}
+
+async function renameConversation(c) {
+  const next = await openNameModal({
+    title: "Rename conversation",
+    value: c.title || "",
+  });
+  if (!next || next === c.title) return;
+  await apiUpdateConversationMeta(c.id, { title: next });
+  if (state.activeId === c.id) setThreadTitle(next);
+  loadConversations(false);
+  refreshPinnedList();
+  loadFolders();
+  const compareTab = compareTabForConv(c.id);
+  if (compareTab) {
+    compareTab.title = next;
+    renderTabs();
+    apiUpdateTab(compareTab.id, {
+      title: next,
+      conversation_id: c.id,
+      tab_type: "conversation",
+    });
+  }
+}
+
+async function togglePinConversation(c) {
+  if (state.pinnedIds.has(c.id)) await apiUnpinConversation(c.id);
+  else await apiPinConversation(c.id);
+  await refreshPinnedList();
+  loadConversations(false);
+}
+
+async function archiveOrRestoreConversation(c) {
+  const archivedView = state.view === "archived";
+  const deletedView = state.view === "deleted";
+  const restoreMode = archivedView || deletedView;
+  if (deletedView) {
+    await apiUpdateConversationMeta(c.id, { deleted: false });
+  } else {
+    await apiUpdateConversationMeta(c.id, { archived: !archivedView });
+  }
+  const leavesView =
+    (state.view === "recent" && !restoreMode) || archivedView || deletedView;
+  const wasPinned = state.pinnedIds.has(c.id);
+  const itemEl = findConvItemEl(c.id);
+  if (leavesView && itemEl && !state.q) {
+    removeConvItemFromList(itemEl);
+  } else {
+    loadConversations(false);
+  }
+  if (wasPinned) refreshPinnedList();
+}
+
+// Delete → Recycle Bin, from any ordinary view (no archiving required). Sets the
+// deleted flag only; every other bit of the conversation's state is preserved so
+// a later Restore returns it exactly as it was.
+async function deleteConversation(c) {
+  await apiUpdateConversationMeta(c.id, { deleted: true });
+  const wasPinned = state.pinnedIds.has(c.id);
+  const itemEl = findConvItemEl(c.id);
+  // The conversation leaves every non-Recycle-Bin list once deleted.
+  if (itemEl && !state.q) {
+    removeConvItemFromList(itemEl);
+  } else {
+    loadConversations(false);
+  }
+  if (wasPinned) refreshPinnedList();
+  // A foldered chat disappears from its folder (it's now in the Recycle Bin).
+  loadFolders();
+}
+
+// Menu items every chat-row ⋮ menu shares (sidebar and Related panel).
+function convRenameItem(c, after = null) {
+  return {
+    label: "Rename",
+    fn: async () => {
+      await renameConversation(c);
+      if (after) await after();
+    },
+  };
+}
+function convCompareItem(c, provider) {
+  return {
+    label: compareTabForConv(c.id) ? "Remove from Compare" : "Compare",
+    fn: () => {
+      const existing = compareTabForConv(c.id);
+      if (existing) removeFromCompare(existing.id);
+      else addToCompare(c.id, c.title, provider);
+    },
+  };
+}
+function convSummaryItem(c) {
+  return { label: "Summary", fn: () => openSummaryForConversation(c.id) };
+}
+
+// The sidebar's ⋮ menu. Archive/Restore/Delete follow the sidebar view.
+function openConvItemMenu(c, anchorBtn) {
+  const archivedView = state.view === "archived";
+  const deletedView = state.view === "deleted";
+  const pinned = state.pinnedIds.has(c.id);
+  const items = [
+    convRenameItem(c),
+    convCompareItem(c, state.providerSide),
+    { label: pinned ? "Unpin" : "Pin", fn: () => togglePinConversation(c) },
+    convSummaryItem(c),
+    {
+      label: archivedView || deletedView ? "Restore" : "Archive",
+      fn: () => archiveOrRestoreConversation(c),
+    },
+  ];
+  // Delete → Recycle Bin, available from every ordinary view (Archive is not a
+  // prerequisite). The Recycle Bin itself uses Restore + the action control.
+  if (!deletedView) {
+    items.push({ label: "Delete", fn: () => deleteConversation(c) });
+  }
+  showConvItemMenu(c, anchorBtn, items);
+}
+
+function convItemMenuIsOpen() {
+  return !!_convMenuEl;
+}
+
+// Draws a chat-row ⋮ menu from {label, fn} items, under its button. Shared by
+// the sidebar and the Related Conversations panel (related.js).
+function showConvItemMenu(c, anchorBtn, items) {
+  const wasForThis =
+    _convMenuEl && _convMenuEl.dataset.convId === c.id;
+  closeConvItemMenu();
+  if (wasForThis) return; // clicking the same ⋮ again closes it
+
+  const menu = document.createElement("div");
+  menu.className = "sidebar-menu conv-item-menu";
+  menu.dataset.convId = c.id;
+  menu.setAttribute("role", "menu");
+
+  for (const it of items) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "sidebar-menu-item";
+    b.setAttribute("role", "menuitem");
+    b.innerHTML = `<span class="sidebar-menu-item-label">${escHtml(it.label)}</span>`;
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeConvItemMenu();
+      it.fn();
+    });
+    menu.appendChild(b);
+  }
+
+  $("workspace-controls").appendChild(menu);
+  _convMenuEl = menu;
+  // Position under the button, right-aligned, kept on screen.
+  const inset = themePixels("--popover-safe-inset");
+  const gap = themePixels("--popover-gap");
+  const r = anchorBtn.getBoundingClientRect();
+  const mw = menu.offsetWidth;
+  let left = r.right - mw;
+  if (left < inset) left = inset;
+  let top = r.bottom + gap;
+  if (top + menu.offsetHeight > window.innerHeight - inset) {
+    top = r.top - menu.offsetHeight - gap;
+  }
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  prepareActionMenu(menu, anchorBtn, closeConvItemMenu);
+  document.addEventListener("mousedown", onConvMenuOutside, true);
+  document.addEventListener("keydown", onConvMenuKey, true);
+  window.addEventListener("scroll", closeConvItemMenu, true);
+}
+
+// ── Shared chat row ───────────────────────────────────────────────────────────
+// One builder draws a chat as a sidebar row wherever one appears: the sidebar
+// list (appendListItems) and the Related Conversations panel (related.js).
+// Callers pass only what differs:
+//   location    — "Archived", "Deleted" or a folder name, shown as Location\Title
+//   openMenu    — the ⋮ handler (default: the sidebar menu)
+//   onOpen      — what clicking the row does (default: open the chat)
+//   snippetHtml — the snippet holds search-highlight markup, not plain text
+// Sidebar-only extras (drag into a folder, the Recycle Bin checkbox) are added
+// by appendListItems after the row is built.
+function buildConvRow(c, { location = null, openMenu = openConvItemMenu, onOpen = null, snippetHtml = false } = {}) {
+  const el = document.createElement("div");
+  el.className = "conv-item" + (c.id === state.activeId ? " active" : "");
+  el.dataset.id = c.id;
+
+  const top = document.createElement("div");
+  top.className = "conv-top-row";
+  const titleEl = document.createElement("div");
+  titleEl.className = "conv-title";
+  titleEl.innerHTML = warningIconsHtml(c);
+  if (location !== null) {
+    const loc = document.createElement("span");
+    loc.className = "related-location";
+    loc.textContent = location;
+    const sep = document.createElement("span");
+    sep.className = "related-location-sep";
+    sep.textContent = "\\";
+    titleEl.append(loc, sep);
+  }
+  titleEl.append(c.title || "Untitled");
+  makeKeyboardAction(titleEl, `Open ${c.title || "Untitled"}`);
+  top.appendChild(titleEl);
+  top.appendChild(buildConvActions(c, openMenu));
+  el.appendChild(top);
+
+  const snippet = (c.preview || c.snippet || "").trim();
+  if (snippet && state.preferences.showChatSnippet) {
+    const sn = document.createElement("div");
+    sn.className = "conv-snippet";
+    if (snippetHtml) sn.innerHTML = snippet;
+    else sn.textContent = snippet;
+    el.appendChild(sn);
+  }
+  const footer = document.createElement("div");
+  footer.className = "conv-footer";
+  const date = document.createElement("span");
+  date.textContent = formatDate(c.update_time || c.create_time);
+  const count = document.createElement("span");
+  count.textContent = `${c.message_count} msg${c.message_count !== 1 ? "s" : ""}`;
+  footer.append(date, count);
+  el.appendChild(footer);
+  // Label squares: one bare square rides on the title's line; several
+  // squares, or any square showing a name, get their own row under the
+  // date/messages line. paintRowLabels decides and places them.
+  paintRowLabels(el, c.id, c.labels || [], ".conv-title", footer);
+
+  if (state.preferences.showSummaryHints && c.has_condensed_summary) {
+    const hintEl = document.createElement("span");
+    hintEl.className = "conv-summary-hint";
+    hintEl.textContent = "Summary";
+    hintEl.dataset.convId = c.id;
+    prepareSummaryHint(hintEl);
+    top.after(hintEl);
+  }
+
+  el.addEventListener("click", () => {
+    if (onOpen) onOpen(c, el);
+    else openConversation(c.id, el);
+  });
+  return el;
+}
+
+function appendListItems(convs, targetEl = convList) {
+  for (const c of convs) {
+    // ── Month section header ──────────────────────────────────────────────────
+    const month = _monthLabel(c.update_time || c.create_time);
+    if (month && month !== _lastSeenMonth) {
+      _lastSeenMonth = month;
+      const headerEl = document.createElement("div");
+      headerEl.className = "month-header";
+      headerEl.innerHTML = `<span class="month-label">${escHtml(month)}</span><span class="month-chevron">▾</span>`;
+      makeKeyboardAction(headerEl, month);
+      headerEl.setAttribute("aria-expanded", "true");
+      headerEl.addEventListener("click", () => {
+        const section = headerEl.nextElementSibling;
+        if (!section?.classList.contains("month-section")) return;
+        const collapsed = section.classList.toggle("month-collapsed");
+        headerEl.setAttribute("aria-expanded", String(!collapsed));
+        headerEl.querySelector(".month-chevron").textContent = collapsed
+          ? "▸"
+          : "▾";
+      });
+      targetEl.appendChild(headerEl);
+      const sectionEl = document.createElement("div");
+      sectionEl.className = "month-section";
+      targetEl.appendChild(sectionEl);
+    }
+
+    // Sidebar search snippets carry <mark> highlight markup from the server.
+    const el = buildConvRow(c, { snippetHtml: true });
+    el.draggable = true; // drag into a folder
+    el.addEventListener("dragstart", (e) => {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", c.id);
+      el.classList.add("dragging");
+    });
+    el.addEventListener("dragend", () => el.classList.remove("dragging"));
+
+    // Recycle Bin rows carry an always-visible checkbox beside the title. Its
+    // presence depends only on the view, never on which action is selected.
+    if (state.view === "deleted") {
+      const top = el.querySelector(":scope > .conv-top-row");
+      el.classList.add("conv-item-recycle");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.className = "conv-select";
+      cb.checked = state.recycleSelected.has(c.id);
+      cb.setAttribute("aria-label", "Select conversation");
+      cb.addEventListener("click", (e) => e.stopPropagation());
+      cb.addEventListener("change", () => {
+        if (cb.checked) state.recycleSelected.add(c.id);
+        else state.recycleSelected.delete(c.id);
+        renderResultCount();
+      });
+      top.insertBefore(cb, top.firstChild);
+    }
+
+    // Append inside the current month section if one exists
+    const lastChild = targetEl.lastElementChild;
+    if (lastChild?.classList.contains("month-section")) {
+      lastChild.appendChild(el);
+    } else {
+      targetEl.appendChild(el);
+    }
+  }
+}
+
+// ── Load / refresh conversation list ─────────────────────────────────────────
+
+let _convListAbort = null;
+
+// Find a conversation row in the main list by id (no querySelector escaping games).
+function findConvItemEl(id) {
+  return (
+    Array.from(convList.querySelectorAll(".conv-item")).find(
+      (el) => el.dataset.id === id,
+    ) || null
+  );
+}
+
+// Remove a single row from the list in place and keep the count/"Load more" in
+// sync — used after archive/delete/restore so we don't tear down and refetch the
+// entire list just to drop one row (that full rebuild is what felt like a freeze).
+function removeConvItemFromList(el) {
+  const section = el.parentElement;
+  el.remove();
+  if (
+    section &&
+    section.classList.contains("month-section") &&
+    !section.children.length
+  ) {
+    const header = section.previousElementSibling;
+    section.remove();
+    if (header && header.classList.contains("month-header")) header.remove();
+  }
+  if (typeof state.total === "number" && state.total > 0) state.total -= 1;
+  if (state.offset > 0) state.offset -= 1;
+  if (!convList.querySelector(".conv-item")) {
+    convList.innerHTML = '<div class="no-results">No conversations found.</div>';
+  }
+  if (!state.q) renderResultCount();
+  loadMoreWrap.hidden = state.offset >= state.total;
+}
+
+async function refreshPinnedList() {
+  const data = await apiPinnedList();
+  const pinned = data.pinned || [];
+  state.pinnedIds = new Set(pinned.map((x) => x.conversation_id));
+  if (pinnedTitleEl) pinnedTitleEl.textContent = `Pinned (${pinned.length})`;
+  // The pinned conversations now live in the "Pinned" filter view, not a
+  // separate top section. We still refresh state.pinnedIds above so the pin/
+  // unpin stars stay correct; there's no dedicated pinned list to render.
+  if (!pinnedList) return;
+  pinnedList.innerHTML = "";
+  for (const p of pinned) {
+    const el = document.createElement("div");
+    el.className =
+      "conv-item" + (p.conversation_id === state.activeId ? " active" : "");
+    el.dataset.id = p.conversation_id;
+    el.draggable = true;
+    const snippet = (p.preview || "").trim();
+    const c = {
+      id: p.conversation_id,
+      title: p.title,
+      update_time: p.update_time,
+      create_time: p.update_time,
+      message_count: p.message_count,
+    };
+    const top = document.createElement("div");
+    top.className = "conv-top-row";
+    top.innerHTML = `<div class="conv-title">${escHtml(p.title)}</div>`;
+    makeKeyboardAction(top.querySelector(".conv-title"), `Open ${p.title || "Untitled"}`);
+    top.appendChild(buildConvActions(c));
+    el.appendChild(top);
+    if (snippet && state.preferences.showChatSnippet) {
+      const sn = document.createElement("div");
+      sn.className = "conv-snippet";
+      sn.textContent = snippet;
+      el.appendChild(sn);
+    }
+    const ft = document.createElement("div");
+    ft.className = "conv-footer";
+    ft.innerHTML = `<span>${formatDate(p.update_time)}</span><span>${p.message_count} msgs</span>`;
+    el.appendChild(ft);
+
+    if (state.preferences.showSummaryHints && p.has_condensed_summary) {
+      const hintEl = document.createElement("span");
+      hintEl.className = "conv-summary-hint";
+      hintEl.textContent = "Summary";
+      hintEl.dataset.convId = p.conversation_id;
+      prepareSummaryHint(hintEl);
+      top.after(hintEl);
+    }
+
+    el.addEventListener("click", () => openConversation(p.conversation_id, el));
+
+    el.addEventListener("dragstart", (e) => {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", p.conversation_id);
+      el.classList.add("dragging");
+    });
+    el.addEventListener("dragend", () => {
+      el.classList.remove("dragging");
+    });
+    el.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+    });
+    el.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      const fromId = e.dataTransfer.getData("text/plain");
+      const toId = p.conversation_id;
+      if (!fromId || fromId === toId) return;
+      const ids = [...pinnedList.querySelectorAll(".conv-item")].map(
+        (n) => n.dataset.id,
+      );
+      const fromIdx = ids.indexOf(fromId);
+      const toIdx = ids.indexOf(toId);
+      if (fromIdx < 0 || toIdx < 0) return;
+      ids.splice(fromIdx, 1);
+      ids.splice(toIdx, 0, fromId);
+      await apiReorderPinned(ids);
+      refreshPinnedList();
+    });
+
+    pinnedList.appendChild(el);
+  }
+}
+
+function syncPinnedSectionVisibility() {
+  if (!pinnedSection) return;
+  // Keep pinned list focused on the default browsing mode to avoid duplicate
+  // entries in archived/deleted/all views and during search-result browsing.
+  const shouldShow = state.view === "recent" && !state.q;
+  pinnedSection.hidden = !shouldShow;
+  if (pinnedHintEl) pinnedHintEl.hidden = !shouldShow;
+}
+
+const VIEW_LABELS = {
+  recent: "Recent",
+  pinned: "Pinned",
+  archived: "Archived",
+  all: "All",
+  deleted: "Recycle Bin",
+  unverified: "Unverified Models",
+};
+
+// The one list header reflects whichever view the dropdown has selected, so it
+// never says "Recent" while showing Pinned/Archived/All results.
+function updateListSectionTitle() {
+  syncViewFilterButton();
+  if (!listSectionTitle) return;
+  if (state.bulkPreview) {
+    listSectionTitle.textContent = "Bulk preview";
+    return;
+  }
+  // A label view's heading is the label itself: its colour, and its name
+  // when it has one.
+  const label = !state.q && labelForView(state.view);
+  if (label) {
+    listSectionTitle.replaceChildren(labelPickSwatch(label));
+    return;
+  }
+  listSectionTitle.textContent = state.q
+    ? "Search results"
+    : labelViewTitle(state.view) || VIEW_LABELS[state.view] || "Recent";
+}
+
+// ── View picker ──────────────────────────────────────────────────────────────
+// The visible button for the hidden #view-filter select. It opens the colour
+// list so label views show their colours on every system; choosing an item
+// sets the select and fires its usual change handler.
+const viewFilterButton = $("view-filter-button");
+
+function labelForView(view) {
+  const v = String(view || "");
+  if (!v.startsWith("label:") || v === "label:__unlabeled__") return null;
+  return labelById(v.slice("label:".length)) || null;
+}
+
+function viewFilterItems() {
+  return [...(viewFilterEl?.options || [])]
+    .filter((opt) => !opt.hidden)
+    .map((opt) => {
+      const label = labelForView(opt.value);
+      return label ? { value: opt.value, label } : { value: opt.value, text: opt.textContent };
+    });
+}
+
+function syncViewFilterButton() {
+  if (!viewFilterButton || !viewFilterEl) return;
+  const value = viewFilterEl.value;
+  const label = labelForView(value);
+  viewFilterButton.replaceChildren();
+  if (label) {
+    viewFilterButton.appendChild(labelPickSwatch(label));
+  } else {
+    const text = document.createElement("span");
+    text.textContent = viewFilterEl.selectedOptions[0]?.textContent || "Recent";
+    viewFilterButton.appendChild(text);
+  }
+  const arrow = document.createElement("span");
+  arrow.className = "view-filter-arrow";
+  arrow.setAttribute("aria-hidden", "true");
+  arrow.textContent = "▾";
+  viewFilterButton.appendChild(arrow);
+  viewFilterButton.setAttribute(
+    "aria-label",
+    `Filter conversations: ${label ? labelAccessibleName(label) : viewFilterEl.selectedOptions[0]?.textContent || "Recent"}`,
+  );
+}
+
+viewFilterButton?.addEventListener("click", () => {
+  openLabelMenu(viewFilterButton, viewFilterItems(), (value) => {
+    viewFilterEl.value = value;
+    viewFilterEl.dispatchEvent(new Event("change"));
+    viewFilterButton.focus();
+  });
+});
+
+// The conversation-count row. In the Recycle Bin it also shows the current
+// selection count (e.g. "327 conversations · 12 selected"), extending the one
+// existing count row rather than adding a second.
+function renderResultCount() {
+  if (!resultCount) return;
+  if (state.q) {
+    const n = (state.total || 0).toLocaleString();
+    resultCount.textContent = `${n} matches`;
+    return;
+  }
+  const n = (state.total || 0).toLocaleString();
+  let text = `${n} conversation${state.total !== 1 ? "s" : ""}`;
+  if (state.view === "deleted") {
+    // The Recycle Bin count row carries the selection count alongside the
+    // total, rather than adding a second row.
+    text += ` · ${state.recycleSelected.size} selected`;
+  }
+  resultCount.textContent = text;
+}
+
+// Show the Recycle Bin action control (action dropdown + Go) only in the
+// Recycle Bin view. Its visibility never depends on which action is selected.
+function syncRecycleControls() {
+  const inRecycle = state.view === "deleted";
+  if (recycleControls) recycleControls.hidden = !inRecycle;
+  if (!inRecycle) state.recycleSelected.clear();
+}
+
+async function loadUiPreferences() {
+  const data = await apiPreferences();
+  const p = data.preferences || {};
+  state.preferences.sidebarCollapsed = Boolean(p.sidebarCollapsed);
+  state.preferences.sidebarWidth = Math.max(
+    themePixels("--sidebar-width-min"),
+    Math.min(themePixels("--sidebar-width-max"), Number(p.sidebarWidth || themePixels("--sidebar-width-default"))),
+  );
+  const savedView = String(p.conversationView || "recent");
+  state.preferences.conversationView = [
+    "recent",
+    "pinned",
+    "archived",
+    "all",
+    "deleted",
+    "unverified",
+  ].includes(savedView)
+    ? savedView
+    : "recent";
+  state.preferences.searchHistory = Array.isArray(p.searchHistory)
+    ? p.searchHistory.slice(0, 20)
+    : [];
+  state.preferences.labelsEnabled = Boolean(p.labelsEnabled);
+  state.preferences.labelDisplay =
+    p.labelDisplay === "square_label" ? "square_label" : "square";
+  state.preferences.includeCondensedSummary = Boolean(p.includeCondensedSummary);
+  state.preferences.showSummaryHints = p.showSummaryHints !== false;
+  state.preferences.showSummaryAuthor = Boolean(p.showSummaryAuthor);
+  state.preferences.autoOpenNotesPanel = Boolean(p.autoOpenNotesPanel);
+  state.preferences.showChatSnippet = Boolean(p.showChatSnippet);
+  state.preferences.showHeaderLabels = Boolean(p.showHeaderLabels);
+  state.scrollByConversation =
+    p.scrollByConversation && typeof p.scrollByConversation === "object"
+      ? p.scrollByConversation
+      : {};
+  state.pageOffsetByConversation = p.pageOffsetByConversation && typeof p.pageOffsetByConversation === "object" ? p.pageOffsetByConversation : {};
+  state.lastConversationId =
+    typeof p.lastConversationId === "string" ? p.lastConversationId : null;
+  const cc = p.compareColors || {};
+  state.compareColors = {
+    chatgpt: _validHexColor(cc.chatgpt)
+      ? cc.chatgpt
+      : DEFAULT_COMPARE_COLORS.chatgpt,
+    claude: _validHexColor(cc.claude)
+      ? cc.claude
+      : DEFAULT_COMPARE_COLORS.claude,
+  };
+  applyCompareColors();
+  // Restore the side last viewed. With no saved choice, start on whichever side
+  // the dataset itself is (loadDatasetFormat runs before this).
+  const savedSide = String(p.providerSide || "");
+  state.providerSide = ["claude", "chatgpt"].includes(savedSide)
+    ? savedSide
+    : state.datasetFormat === "chatgpt"
+      ? "chatgpt"
+      : "claude";
+  state.preferences.providerSide = state.providerSide;
+  renderProviderToggle();
+  if (claudeModelsMenuItem) claudeModelsMenuItem.hidden = !isClaudeSide();
+  state.view = state.preferences.conversationView;
+  if (viewFilterEl) viewFilterEl.value = state.view;
+  syncRecycleControls();
+  updateListSectionTitle();
+  applySidebarWidth(state.preferences.sidebarWidth);
+  document.body.classList.toggle(
+    "sidebar-collapsed",
+    state.preferences.sidebarCollapsed,
+  );
+  syncPinnedSectionVisibility();
+}
+
+function renderSearchHistory() {
+  if (!searchHistoryListEl) return;
+  searchHistoryListEl.innerHTML = "";
+  for (const q of state.preferences.searchHistory || []) {
+    const opt = document.createElement("option");
+    opt.value = q;
+    searchHistoryListEl.appendChild(opt);
+  }
+}
+
+function rememberSearchQuery(q) {
+  const query = String(q || "").trim();
+  if (!query) return;
+  const old = state.preferences.searchHistory || [];
+  state.preferences.searchHistory = [
+    query,
+    ...old.filter((x) => x !== query),
+  ].slice(0, 20);
+  renderSearchHistory();
+}
+
+async function saveUiPreferences(partial) {
+  state.preferences = { ...state.preferences, ...partial };
+  await apiUpdatePreferences(state.preferences);
+}
+
+async function leaveNotesForSpecialView() {
+  // Every special view comes through here, so leaving Scratch Pads (and its
+  // unsaved-changes check) happens here too.
+  if (typeof scratchPadNavigationGuard === "function" && !(await scratchPadNavigationGuard())) return false;
+  if (typeof notesNavigationGuard !== "function") return true;
+  return notesNavigationGuard({ endVisit: true });
+}
+
+function getTabById(tabId) {
+  return state.tabs.find((tab) => tab.id === tabId) || null;
+}
+
+// Every persisted tab is now a Compare item, and Compare holds conversations
+// only — artifacts open transiently, and the sidebar switches between chats.
+function isTopTab(tab) {
+  return !!tab && tab.tab_type === "conversation";
+}
+
+function compareCount() {
+  return state.tabs.filter(isTopTab).length;
+}
+
+function compareTabForConv(convId) {
+  return (
+    state.tabs.find(
+      (t) => t.tab_type === "conversation" && t.conversation_id === convId,
+    ) || null
+  );
+}
+
+// Remember which conversation to return to when a special view (Memories,
+// Settings, …) is closed. A Compare item is not "the last thing viewed" unless
+// one is actually open, so track the open conversation id directly.
+function rememberReturnTab() {
+  if (state.activeId) state.lastConversationId = state.activeId;
+}
+
+// The conversation a closing special view should return to: the last one
+// opened if it still exists, else the first Compare item, else none.
+function returnConversationId() {
+  if (state.lastConversationId) return state.lastConversationId;
+  const first = state.tabs.find(isTopTab);
+  return first ? first.conversation_id : null;
+}
+
+async function returnFromSpecialView() {
+  state.activeSpecialView = null;
+  const cid = returnConversationId();
+  if (cid) {
+    await openConversation(cid, findConvItemEl(cid));
+  } else {
+    hideAllPanels();
+    emptyState.hidden = false;
+  }
+  renderTabs();
+}
+
+// ── Compare (the top strip) ───────────────────────────────────────────────────
+// The strip holds up to MAX_COMPARE conversations the user explicitly added via
+// the Compare action. They behave like fast pins and, unlike folders / pins /
+// the sidebar list, may mix Claude and ChatGPT.
+const MAX_COMPARE = 4;
+
+async function addToCompare(convId, title, provider) {
+  if (!convId) return;
+  if (compareTabForConv(convId)) {
+    flashCompareMessage("Already in Compare");
+    return;
+  }
+  if (compareCount() >= MAX_COMPARE) {
+    flashCompareMessage(`Compare holds at most ${MAX_COMPARE} chats`);
+    return;
+  }
+  const created = await apiCreateTab({
+    tab_type: "conversation",
+    conversation_id: convId,
+    title: title || "Conversation",
+    provider: provider || null,
+  });
+  state.tabs.push({
+    id: created.id,
+    tab_type: "conversation",
+    conversation_id: convId,
+    title: title || "Conversation",
+    provider: provider || null,
+  });
+  renderTabs();
+}
+
+async function removeFromCompare(tabId) {
+  const tab = getTabById(tabId);
+  if (!tab) return;
+  await apiDeleteTab(tabId);
+  state.tabs = state.tabs.filter((t) => t.id !== tabId);
+  renderTabs();
+}
+
+// A small, self-clearing note in the strip when Compare can't add a chat.
+let _compareMsgTimer = null;
+function flashCompareMessage(text) {
+  if (!tabsWrap) return;
+  tabsWrap.hidden = false;
+  let note = document.getElementById("compare-note");
+  if (!note) {
+    note = document.createElement("div");
+    note.id = "compare-note";
+    note.className = "compare-note";
+    tabsWrap.appendChild(note);
+  }
+  note.textContent = text;
+  clearTimeout(_compareMsgTimer);
+  _compareMsgTimer = setTimeout(() => {
+    note.remove();
+    renderTabs();
+  }, 2200);
+}
+
+// Closing the last open tab used to leave the pane blank ("Untitled"/empty)
+// even though the sidebar is full of conversations. Open the most recent one
+// instead, so there is always something in that space.
+async function openMostRecentConversation() {
+  try {
+    const p = new URLSearchParams({
+      limit: 1,
+      offset: 0,
+      view: "recent",
+      pinned_first: "0",
+    });
+    const data = await apiRequest(`/api/conversations?${p}`, {
+      action: "Open most recent conversation",
+    });
+    const top = (data.conversations || [])[0];
+    if (!top) return false;
+    await openConversation(top.id, findConvItemEl(top.id));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function renderTabs() {
+  if (!tabsList) return;
+  tabsList.innerHTML = "";
+  const items = state.tabs.filter(isTopTab);
+  // The strip appears as soon as there's one Compare item (they're fast pins),
+  // or while a transient note is showing.
+  const hasNote = !!document.getElementById("compare-note");
+  tabsWrap.hidden = items.length === 0 && !hasNote;
+  for (const t of items) {
+    const tab = document.createElement("div");
+    const active = t.conversation_id === state.activeId;
+    tab.className = "top-tab" + (active ? " active" : "");
+    if (t.provider === "chatgpt" || t.provider === "claude") {
+      tab.classList.add(`provider-${t.provider}`);
+    }
+    tab.innerHTML = `<span class="tab-label">${escHtml(t.title || "Untitled")}</span><button type="button" class="tab-close" title="Remove from Compare">×</button>`;
+    // The open action and Remove button are separate keyboard targets.
+    makeKeyboardAction(tab.querySelector(".tab-label"), `Open ${t.title || "Untitled"} from Compare`);
+    tab.querySelector(".tab-close").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await removeFromCompare(t.id);
+    });
+    tab.addEventListener("click", () =>
+      openConversation(t.conversation_id, findConvItemEl(t.conversation_id)),
+    );
+    tabsList.appendChild(tab);
+  }
+}
+
+async function loadTabs() {
+  const data = await apiTabs();
+  state.tabs = (data.tabs || []).filter(isTopTab);
+  renderTabs();
+}
+
+async function ensureSpecialTab(tabType, title) {
+  clearSimpleSearchForSection();
+  state.activeSpecialView = tabType;
+  renderTabs();
+}
+
+// Artifacts open transiently in the reading pane — they never join the Compare
+// strip. Kept as its own function so existing callers need no changes.
+// An artifact is named by its chat and its own name together (AUDIT.md #5):
+// the same name can be in several chats.
+async function openArtifactTab(convId, artifactId, title) {
+  state.activeSpecialView = null;
+  await renderArtifactTabContent(convId, artifactId, title);
+  renderTabs();
+}
+
+async function renderArtifactTabContent(convId, artifactId, title) {
+  hideAllPanels();
+  thread.hidden = false;
+  closeArtifactPanel();
+  state.activeSpecialView = null;
+  setThreadTitle(title || artifactId);
+  threadMeta.textContent = "Artifact tab";
+  threadTags.innerHTML = "";
+  messagesEl.innerHTML = '<div class="loading">Loading…</div>';
+  const data = await apiRequest(
+    `/api/artifact/${encodeURIComponent(artifactId)}?${new URLSearchParams({ conv: convId || "" })}`,
+    { action: "Open artifact" },
+  ).catch(() => null);
+  messagesEl.innerHTML = "";
+  if (!data || !data.content) {
+    messagesEl.innerHTML = '<div class="no-results">No content</div>';
+    return;
+  }
+  if (data.conv_id) {
+    const sourceEl = resolveConversationSidebarEl(data.conv_id);
+    document
+      .querySelectorAll(".conv-item.active")
+      .forEach((el) => el.classList.remove("active"));
+    if (sourceEl) sourceEl.classList.add("active");
+    state.activeId = data.conv_id;
+
+    const sourceTitle =
+      sourceEl?.querySelector(".conv-title")?.textContent || data.conv_id;
+    threadMeta.innerHTML = "";
+    const metaLabel = document.createElement("span");
+    metaLabel.textContent = "Artifact tab";
+    const sourceBtn = document.createElement("button");
+    sourceBtn.type = "button";
+    sourceBtn.className = "artifact-source-link";
+    sourceBtn.textContent = `Source: ${sourceTitle}${data.msg_seq != null ? ` · msg #${data.msg_seq}` : ""}`;
+    sourceBtn.addEventListener("click", () => {
+      openConversation(
+        data.conv_id,
+        resolveConversationSidebarEl(data.conv_id),
+        data.msg_seq != null ? data.msg_seq : null,
+      );
+    });
+    threadMeta.append(metaLabel, sourceBtn);
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "message assistant";
+  const roleEl = document.createElement("div");
+  roleEl.className = "message-role";
+  roleEl.textContent = "Code";
+  const bodyEl = document.createElement("div");
+  bodyEl.className = "message-body";
+  if (data.type === "application/vnd.ant.code" || data.lang) {
+    bodyEl.innerHTML = md(`\`\`\`${data.lang || ""}\n${data.content}\n\`\`\``);
+  } else {
+    bodyEl.innerHTML = md(sanitize(data.content));
+  }
+  wireCodeCopy(bodyEl);
+  if (typeof renderMathInElement === "function") {
+    renderMathInElement(bodyEl, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "$", right: "$", display: false },
+      ],
+      throwOnError: false,
+    });
+  }
+  wrap.append(roleEl, bodyEl);
+  messagesEl.appendChild(wrap);
+}
+
+// Restore whatever the app was showing (a special view, else the last
+// conversation, else the empty state). Used on load and by tab cycling.
+async function activateActiveTab() {
+  if (state.activeSpecialView === "gallery") return openGallery(false);
+  if (state.activeSpecialView === "scratch_pads") return openScratchPads(false);
+  if (state.activeSpecialView === "global_bookmarks")
+    return openGlobalBookmarks(false);
+  if (state.activeSpecialView === "memories") return openMemories(false);
+  if (state.activeSpecialView === "projects") return openProjects(false);
+  if (state.activeSpecialView === "attachment_report")
+    return openAttReport(false, false);
+  if (state.activeSpecialView === "claude_models") return openClaudeModels();
+  if (state.activeSpecialView === "labels") return openLabels();
+  if (state.activeSpecialView === "import_audit") return openImportAudit(false);
+  if (state.activeSpecialView === "error_log") return openErrorLog();
+  if (state.activeSpecialView === "gizmos") return openGizmos();
+  if (state.activeSpecialView === "import_new") return openImportNew();
+  if (state.activeSpecialView === "settings") return openSettings();
+  if (state.activeSpecialView === "about") return openAbout();
+  const cid = returnConversationId();
+  if (cid) {
+    await openConversation(cid, findConvItemEl(cid));
+    return;
+  }
+  hideAllPanels();
+  emptyState.hidden = false;
+}
+
+async function loadConversations(append = false) {
+  // Cancel any in-flight request
+  if (_convListAbort) {
+    _convListAbort.abort();
+  }
+  _convListAbort = new AbortController();
+  const { signal } = _convListAbort;
+
+  if (!append) {
+    convList.innerHTML = '<div class="loading">Loading…</div>';
+    state.offset = 0;
+    _lastSeenMonth = null;
+  }
+
+  try {
+    const data = state.bulkPreview
+      ? await apiBulkPreviewList(state.offset, signal)
+      : await apiConversations(state.q, state.offset, signal);
+    state.total = data.total;
+    state.unverifiedCount = data.unverified_count || 0;
+    syncUnverifiedOption();
+    state.offset += (data.conversations || []).length;
+
+    if (!append) convList.innerHTML = "";
+
+    if (!data.conversations?.length && !append) {
+      convList.innerHTML =
+        '<div class="no-results">No conversations found.</div>';
+    } else {
+      appendListItems(data.conversations || []);
+    }
+
+    renderResultCount();
+
+    loadMoreWrap.hidden = state.offset >= state.total;
+  } catch (e) {
+    if (e.name === "AbortError") return; // cancelled — ignore silently
+    convList.innerHTML = '<div class="no-results">Failed to load. Please try again.</div>';
+  }
+}
+
+// ── Helper: hide all main panels ─────────────────────────────────────────────
+
+function hideAllPanels() {
+  emptyState.hidden = true;
+  thread.hidden = true;
+  if (summaryBodyPanel) summaryBodyPanel.hidden = true;
+  if (notesBodyPanel) notesBodyPanel.hidden = true;
+  galleryPanel.hidden = true;
+  memoriesPanel.hidden = true;
+  projectsPanel.hidden = true;
+  attReportPanel.hidden = true;
+  importAuditPanel.hidden = true;
+  if (errorLogPanel) errorLogPanel.hidden = true;
+  gizmosPanel.hidden = true;
+  importNewPanel.hidden = true;
+  settingsPanel.hidden = true;
+  aboutPanel.hidden = true;
+  claudeModelsPanel.hidden = true;
+  labelsPanel.hidden = true;
+  const gbPanelEl = document.getElementById("global-bookmarks-panel");
+  if (gbPanelEl) gbPanelEl.hidden = true;
+  if (typeof scratchPadPanelsHidden === "function") scratchPadPanelsHidden();
+  closeArtifactPanel();
+  closeFilePanel();
+  clearSearchNav();
+}
+
+// ── Artifact side panel ───────────────────────────────────────────────────────
+
+function closeArtifactPanel() {
+  artifactPanel.hidden = true;
+  thread.classList.remove("with-artifact");
+}
+
+async function openArtifactPanel(convId, artifactId, title) {
+  closeFilePanel(); // mutual exclusion — only one side panel at a time
+  artifactPanelTitle.textContent = title || artifactId;
+  artifactPanelBody.innerHTML = '<div class="loading">Loading…</div>';
+  artifactPanel.hidden = false;
+  thread.classList.add("with-artifact");
+
+  const data = await apiRequest(
+    `/api/artifact/${encodeURIComponent(artifactId)}?${new URLSearchParams({ conv: convId || "" })}`,
+    { action: "Open artifact" },
+  ).catch(() => null);
+  artifactPanelBody.innerHTML = "";
+
+  if (!data || !data.content) {
+    artifactPanelBody.innerHTML = '<div class="no-results">No content</div>';
+    return;
+  }
+
+  const isCode = data.type === "application/vnd.ant.code" || data.lang;
+  const bodyEl = document.createElement("div");
+  bodyEl.className = "message-body artifact-panel-content";
+
+  if (isCode) {
+    const lang = data.lang || "";
+    bodyEl.innerHTML = md("```" + lang + "\n" + data.content + "\n```");
+  } else if (data.type === "text/html") {
+    // Show source, don't execute
+    bodyEl.innerHTML = md("```html\n" + data.content + "\n```");
+  } else {
+    bodyEl.innerHTML = md(sanitize(data.content));
+  }
+
+  wireCodeCopy(bodyEl);
+  if (typeof renderMathInElement === "function") {
+    renderMathInElement(bodyEl, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "$", right: "$", display: false },
+      ],
+      throwOnError: false,
+    });
+  }
+  artifactPanelBody.appendChild(bodyEl);
+}
+
+$("artifact-panel-close").addEventListener("click", closeArtifactPanel);
+
+// ── Artifact panel drag-to-resize ─────────────────────────────────────────────
+{
+  const panel = artifactPanel;
+  const handle = $("artifact-panel-resize");
+  setupResizeHandle(handle, {
+    label: "Artifact preview width", orientation: "vertical", controls: "artifact-panel", reverse: true,
+    getValue: () => panel.offsetWidth,
+    getBounds: () => [themePixels("--artifact-panel-min-width"), themePixels("--side-panel-max-width")],
+    setValue: (width) => $("main").style.setProperty("--artifact-panel-width", `${width}px`),
+  });
+  let dragging = false,
+    startX = 0,
+    startW = 0;
+  handle.addEventListener("mousedown", (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startW = panel.offsetWidth;
+    document.body.classList.add("resizing-columns");
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const delta = startX - e.clientX; // drag left → wider
+    const w = Math.max(themePixels("--artifact-panel-min-width"), Math.min(themePixels("--side-panel-max-width"), startW + delta));
+    $("main").style.setProperty("--artifact-panel-width", `${w}px`);
+  });
+  document.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("resizing-columns");
+  });
+}
+
+// ── Artifact chips for assistant messages ─────────────────────────────────────
+
+function createArtifactChips(artifactIds, artifactsMeta) {
+  if (!artifactIds?.length) return null;
+  const wrap = document.createElement("div");
+  wrap.className = "artifact-chips";
+  for (const id of artifactIds) {
+    const meta = artifactsMeta?.[id];
+    if (!meta) continue;
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "artifact-chip";
+    const icon =
+      meta.type === "application/vnd.ant.code"
+        ? "⚙️"
+        : meta.type === "text/html"
+          ? "🌐"
+          : meta.type === "image/svg+xml"
+            ? "🖼️"
+            : "📄";
+    chip.innerHTML = `<span class="chip-icon">${icon}</span><span class="chip-name">${escHtml(meta.title || id)}</span>`;
+    chip.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openArtifactTab(meta.conv_id, id, meta.title || id);
+    });
+    wrap.appendChild(chip);
+  }
+  return wrap.childElementCount ? wrap : null;
+}
+
+// ── Open a conversation ───────────────────────────────────────────────────────
+
+const EMPTY_CONV_NOTICE = {
+  metadata_only:
+    "This conversation has no displayable messages (metadata-only import).",
+  parse_error:
+    "This conversation could not be parsed from the export, and no messages were recovered (parse error).",
+  fallback:
+    "This conversation was recovered by the fallback parser, but it yielded no displayable messages.",
+  default: "This conversation has no displayable messages.",
+};
+
+// Keep existing message rendering (branches, files, math, bookmarks) shared
+// between initial opening and subsequent pages.
+function renderConversationMessages(messages, conv, artifactsMeta) {
+  for (const msg of messages) {
+    const div = document.createElement("div");
+    div.className = `message ${msg.role}`;
+    if (msg.seq != null) div.dataset.seq = msg.seq;
+    if (msg.message_uuid) div.dataset.messageId = msg.message_uuid;
+
+    const label =
+      msg.role === "user"
+        ? "You"
+        : msg.role === "assistant"
+          ? (conv.gizmo_name || "Claude")
+          : msg.role;
+
+    // ── User file chips appear BEFORE message body ───────────────────────────
+    let chipsEl = null;
+    if (msg.role === "user" && msg.attachments?.length) {
+      // Inline images first
+      const inlineImgs = createInlineImagesEl(msg.attachments);
+      if (inlineImgs.childNodes.length) div.appendChild(inlineImgs);
+      chipsEl = createChipsEl(msg.attachments);
+      if (chipsEl.children.length) div.appendChild(chipsEl);
+      else chipsEl = null;
+    }
+
+    const bodyEl = document.createElement("div");
+    bodyEl.className = "message-body";
+    bodyEl.innerHTML = md(sanitize(msg.content || ""));
+    wireCodeCopy(bodyEl);
+
+    // Render math with KaTeX if available
+    if (typeof renderMathInElement === "function") {
+      renderMathInElement(bodyEl, {
+        delimiters: [
+          { left: "$$", right: "$$", display: true },
+          { left: "\\[", right: "\\]", display: true },
+          { left: "$", right: "$", display: false },
+          { left: "\\(", right: "\\)", display: false },
+        ],
+        throwOnError: false,
+      });
+    }
+
+    const roleEl = document.createElement("div");
+    roleEl.className = "message-role";
+    const nameEl = document.createElement("span");
+    nameEl.className = "message-role-name";
+    nameEl.textContent = label;
+    roleEl.appendChild(nameEl);
+    div.insertBefore(roleEl, div.firstChild);
+
+    // ── Bookmark control + title ────────────────────────────────────────────
+    // The per-message bookmark icon sits beside the name (left of it on the
+    // user's own messages, right of it on the assistant's), and the bookmark
+    // title (when set) rides to the right of the date/time line.
+    const timeText = formatMessageTime(msg.create_time);
+    const metaRow = document.createElement("div");
+    metaRow.className = "message-meta-row";
+    if (timeText) {
+      const timeEl = document.createElement("span");
+      timeEl.className = "message-time";
+      timeEl.textContent = timeText;
+      metaRow.appendChild(timeEl);
+    }
+    roleEl.after(metaRow);
+    if (msg.seq != null && typeof decorateMessageBookmark === "function") {
+      decorateMessageBookmark({ div, roleEl, nameEl, metaRow, seq: msg.seq, role: msg.role });
+    }
+    // "Link Message", only while Advanced Search picks a link for a Scratch Pad.
+    if (msg.seq != null && typeof decorateMessageLinkPick === "function") {
+      decorateMessageLinkPick({ div, metaRow, seq: msg.seq, messageId: msg.message_uuid || null });
+    }
+
+    div.appendChild(bodyEl);
+
+    // ── Assistant-generated file chips appear AFTER body (like Claude's UI) ──
+    if (msg.role === "assistant" && msg.attachments?.length) {
+      const assistChips = createChipsEl(msg.attachments);
+      if (assistChips.children.length) div.appendChild(assistChips);
+    }
+
+    // ── Artifact chips (assistant messages) ───────────────────────────────────
+    if (msg.role === "assistant" && msg.artifact_ids?.length) {
+      const artChips = createArtifactChips(msg.artifact_ids, artifactsMeta);
+      if (artChips) div.appendChild(artChips);
+    }
+
+    // ── Branch / retry navigation (← N/M →) ─────────────────────────────────
+    if (msg.siblings?.length > 1) {
+      const total = msg.siblings.length;
+      let curIdx = Math.max(
+        0,
+        Math.min((msg.branch_index || total) - 1, total - 1),
+      );
+      // Save original active branch so we can restore downstream visibility
+      div._origBranchIdx = curIdx;
+
+      const navEl = document.createElement("div");
+      navEl.className = "branch-nav";
+
+      const prevBtn = document.createElement("button");
+      prevBtn.className = "branch-btn";
+      prevBtn.type = "button";
+      prevBtn.title = "Previous version";
+      prevBtn.textContent = "←";
+
+      const counterEl = document.createElement("span");
+      counterEl.className = "branch-counter";
+      counterEl.textContent = `${curIdx + 1} / ${total}`;
+
+      const nextBtn = document.createElement("button");
+      nextBtn.className = "branch-btn";
+      nextBtn.type = "button";
+      nextBtn.title = "Next version";
+      nextBtn.textContent = "→";
+
+      const updateBranch = (newIdx) => {
+        curIdx = ((newIdx % total) + total) % total;
+        counterEl.textContent = `${curIdx + 1} / ${total}`;
+        const sib = msg.siblings[curIdx];
+
+        // Update this user message bubble
+        bodyEl.innerHTML = md(sanitize(sib.content || ""));
+        wireCodeCopy(bodyEl);
+
+        // Update the adjacent assistant response (for user-branch switching)
+        if ("asst_content" in sib) {
+          const nextMsgEl = div.nextElementSibling;
+          if (nextMsgEl?.classList.contains("assistant")) {
+            const nextBody = nextMsgEl.querySelector(".message-body");
+            if (nextBody) {
+              const ac = sib.asst_content || "";
+              nextBody.innerHTML = ac
+                ? md(sanitize(ac))
+                : '<p class="branch-no-response">(Claude did not respond in this branch)</p>';
+              wireCodeCopy(nextBody);
+            }
+            // Update assistant artifact chips when user branch changes
+            const newArtIds = sib.asst_artifact_ids || [];
+            let existingArtChips = nextMsgEl.querySelector(".artifact-chips");
+            if (newArtIds.length) {
+              const newArtChips = createArtifactChips(newArtIds, artifactsMeta);
+              if (existingArtChips && newArtChips)
+                existingArtChips.replaceWith(newArtChips);
+              else if (newArtChips) nextMsgEl.appendChild(newArtChips);
+            } else if (existingArtChips) {
+              existingArtChips.remove();
+            }
+          }
+        }
+
+        // For assistant-branch switching: update artifact chips on this div
+        if (msg.role === "assistant") {
+          const newArtIds = sib.artifact_ids || [];
+          let existingArtChips = div.querySelector(".artifact-chips");
+          if (newArtIds.length) {
+            const newArtChips = createArtifactChips(newArtIds, artifactsMeta);
+            if (existingArtChips && newArtChips)
+              existingArtChips.replaceWith(newArtChips);
+            else if (newArtChips) div.insertBefore(newArtChips, navEl);
+          } else if (existingArtChips) {
+            existingArtChips.remove();
+          }
+        }
+
+        // Show downstream messages only when on the original active branch
+        div._toggleDownstream?.(curIdx === div._origBranchIdx);
+
+        // Update chips for user message branches
+        if (msg.role === "user") {
+          const newAtts = sib.attachments || [];
+          if (chipsEl) {
+            if (newAtts.length) {
+              const newChips = createChipsEl(newAtts);
+              chipsEl.replaceWith(newChips);
+              chipsEl = newChips;
+            } else {
+              chipsEl.remove();
+              chipsEl = null;
+            }
+          } else if (newAtts.length) {
+            chipsEl = createChipsEl(newAtts);
+            div.insertBefore(chipsEl, bodyEl);
+          }
+        }
+        prevBtn.disabled = curIdx === 0;
+        nextBtn.disabled = curIdx === total - 1;
+      };
+
+      prevBtn.addEventListener("click", () => updateBranch(curIdx - 1));
+      nextBtn.addEventListener("click", () => updateBranch(curIdx + 1));
+      prevBtn.disabled = curIdx === 0;
+      nextBtn.disabled = curIdx === total - 1;
+
+      navEl.append(prevBtn, counterEl, nextBtn);
+      div.appendChild(navEl);
+    }
+
+    messagesEl.appendChild(div);
+  }
+
+  // Post-process: wire each branched USER div to hide/show its downstream messages.
+  // Assistant branches only swap content — they never hide downstream.
+  {
+    const allDivs = Array.from(messagesEl.querySelectorAll(":scope > .message"));
+    for (let i = 0; i < allDivs.length; i++) {
+      const d = allDivs[i];
+      if (d._origBranchIdx === undefined) continue;
+      if (!d.classList.contains("user")) continue; // assistant branches: skip
+      // Downstream = every sibling div after the immediate next assistant (i+2 onward)
+      d._toggleDownstream = (show) => {
+        const current = Array.from(messagesEl.querySelectorAll(":scope > .message"));
+        current.slice(current.indexOf(d) + 2).forEach((el) => {
+          el.classList.toggle("branch-hidden", !show);
+        });
+      };
+    }
+  }
+
+}
+
+function renderConversationPager() {
+  messagesEl.querySelectorAll(".conversation-pager").forEach(el => el.remove());
+  const page = state.messagePage;
+  if (!page || page.id !== state.activeId) return;
+  if (page.total > page.messages.length) {
+    const status = document.createElement("div");
+    status.className = "import-new-status conversation-pager";
+    status.setAttribute("role", "status");
+    status.textContent = `Messages ${page.offset + 1}–${page.offset + page.messages.length} of ${page.total}`;
+    messagesEl.prepend(status);
+  }
+  for (const [label, offset, before] of [
+    ["Previous messages", page.previous_offset, true],
+    ["Next messages", page.next_offset, false],
+  ]) {
+    if ((before && !page.offset) || (!before && offset == null)) continue;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "import-review-btn conversation-pager";
+    button.textContent = label;
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try { await showConversationPage({ offset }); }
+      finally { button.disabled = false; }
+    });
+    if (before) messagesEl.prepend(button); else messagesEl.append(button);
+  }
+}
+
+let conversationPageRequest = 0;
+async function showConversationPage(params) {
+  const request = ++conversationPageRequest;
+  const id = state.activeId;
+  const data = await apiConversation(id, params);
+  if (request !== conversationPageRequest || id !== state.activeId || state.activeSpecialView) return false;
+  if (data.error) { showAppNotice(data.error); return false; }
+  state.messagePage = { ...data, id };
+  (state.pageOffsetByConversation ||= {})[id] = data.offset;
+  messagesEl.innerHTML = "";
+  renderConversationMessages(data.messages, data.conversation, data.artifacts || {});
+  renderConversationPager();
+  messagesEl.scrollTop = 0;
+  return true;
+}
+
+async function ensureConversationMessage(seq) {
+  if (messagesEl.querySelector(`[data-seq="${seq}"]`)) return true;
+  return showConversationPage({ target_seq: seq });
+}
+
+async function openConversation(id, clickedEl, targetSeq = null, { keepAdvancedSearch = false } = {}) {
+  // Leaving Scratch Pads checks for unsaved changes. A chat previewed while
+  // Advanced Search picks a link for a Scratch Pad stays inside that workspace.
+  if (typeof scratchPadNavigationGuard === "function" &&
+      !(await scratchPadNavigationGuard({ preview: keepAdvancedSearch }))) return;
+  if (typeof summaryHasUnsavedChanges === "function" && summaryHasUnsavedChanges()) {
+    const r = await openSummaryUnsavedModal();
+    if (r === "cancel") return;
+    if (r === "save") await saveAllUnsaved();
+  }
+  if (typeof closeSummaryPanel === "function") closeSummaryPanel();
+  if (typeof notesNavigationGuard === "function") {
+    const canLeave = await notesNavigationGuard({ endVisit: false });
+    if (!canLeave) return;
+  }
+  if (typeof beginNotesConversationVisit === "function") {
+    const beganVisit = await beginNotesConversationVisit(id);
+    if (!beganVisit) return;
+  }
+  // Choosing a conversation returns to the normal reading layout. Advanced
+  // Search keeps its draft and last results in memory for this browser session.
+  // Find Related Conversations previews chats with the search still open.
+  if (!keepAdvancedSearch && window.advancedSearchController?.isOpen()) {
+    window.advancedSearchController.close();
+  }
+  state.activeSpecialView = null;
+  // Update sidebar selection (main list and folder tree)
+  document
+    .querySelectorAll(".conv-item.active, .folder-conv-item.active")
+    .forEach((el) => el.classList.remove("active"));
+  if (clickedEl) clickedEl.classList.add("active");
+  state.activeId = id;
+
+  // Show thread panel, clear previous content
+  hideAllPanels();
+  if (!state.q) clearSearchNav(); // remove stale nav bar when no search active
+  thread.hidden = false;
+  messagesEl.innerHTML = '<div class="loading">Loading…</div>';
+  setThreadTitle("");
+  renderHeaderLabel(null, null);
+  state.activeLabels = [];
+  threadMeta.textContent = "";
+  threadTags.innerHTML = "";
+
+  const openingRequest = ++conversationPageRequest;
+  const data = await apiConversation(id, targetSeq == null ? { offset: state.pageOffsetByConversation[id] || 0 } : { target_seq: targetSeq });
+  if (openingRequest !== conversationPageRequest || state.activeId !== id || state.activeSpecialView) return;
+  if (data.error) {
+    messagesEl.innerHTML = `<div class="no-results">Error: ${escHtml(data.error)}</div>`;
+    return;
+  }
+
+  const { conversation: conv, messages, artifacts: artifactsMeta = {} } = data;
+  state.activeProvider = conv.provider || null;
+  // The open conversation's own pin/folder state, from the server rather than
+  // the sidebar-scoped sets — so the thread menu stays correct for a Compare
+  // item opened from the opposite provider.
+  state.activePinned = !!conv.pinned;
+  state.activeFolderId = conv.folder_id || null;
+  state.activeFolderPinned = !!conv.folder_pinned;
+
+  setThreadTitle(conv.title);
+  // Bookmarks for this conversation. Reset any open bookmark UI from a prior
+  // conversation first (we never carry an open bar/panel across a switch), then
+  // adopt this conversation's list.
+  if (typeof resetBookmarksForConversation === "function") {
+    resetBookmarksForConversation(data.bookmarks || []);
+  }
+  state.activeLabels = conv.labels || [];
+  renderHeaderLabel(conv.id, state.activeLabels);
+  const ts = formatDate(conv.update_time || conv.create_time);
+  threadMeta.textContent = "";
+  const metaText = document.createElement("span");
+  metaText.textContent = `${ts} · ${conv.message_count} messages`;
+  threadMeta.appendChild(metaText);
+  state.models = data.models || null;
+  renderModelStrip();
+  renderGizmoThreadIdentity(conv);
+  state.tags = data.tags || [];
+  state.moodTags = data.mood_tags || [];
+  renderThreadTags();
+  if (typeof relatedConversationOpened === "function") relatedConversationOpened(conv);
+
+  if (typeof finishOpeningNotesConversationVisit === "function") {
+    await finishOpeningNotesConversationVisit(id);
+    if (state.activeId !== id) return;
+  }
+
+  messagesEl.innerHTML = "";
+  if (!messages.length) {
+    // The record was kept so the import audit can account for it. Name the
+    // status that actually left it empty — calling a parse_error a
+    // metadata-only import misreports the very thing the audit exists to show.
+    const note = document.createElement("div");
+    note.className = "no-results";
+    note.textContent = EMPTY_CONV_NOTICE[conv.import_status] || EMPTY_CONV_NOTICE.default;
+    messagesEl.appendChild(note);
+  }
+  state.messagePage = { ...data, id };
+  (state.pageOffsetByConversation ||= {})[id] = data.offset;
+  renderConversationMessages(messages, conv, artifactsMeta);
+  renderConversationPager();
+
+  // Scroll thread to top (or to a target message)
+  if (targetSeq != null) {
+    const targetEl = messagesEl.querySelector(`[data-seq="${targetSeq}"]`);
+    if (targetEl) {
+      const cRect = messagesEl.getBoundingClientRect();
+      const eRect = targetEl.getBoundingClientRect();
+      const absTop = eRect.top - cRect.top + messagesEl.scrollTop;
+      const target =
+        absTop - (messagesEl.clientHeight - targetEl.offsetHeight) / 2;
+      messagesEl.scrollTo({ top: Math.max(0, target), behavior: preferredScrollBehavior() });
+      targetEl.classList.add("search-highlight");
+      setTimeout(() => targetEl.classList.remove("search-highlight"), 2500);
+    }
+  } else {
+    const saved = Number(state.scrollByConversation[id] || 0);
+    messagesEl.scrollTop = saved > 0 ? saved : 0;
+  }
+
+  // ── Search nav bar: show in-thread match navigation when search is active ──
+  if (state.q) {
+    buildSearchNavBar(id, state.q, targetSeq);
+  }
+
+  // Opening a chat no longer creates a tab — the top strip is the Compare list
+  // only. Just remember this as the conversation to return to, and keep a
+  // matching Compare item's title in sync (e.g. after a rename).
+  state.lastConversationId = id;
+  const compareTab = compareTabForConv(id);
+  if (compareTab && compareTab.title !== conv.title) {
+    compareTab.title = conv.title;
+    if (compareTab.provider == null && conv.provider) {
+      compareTab.provider = conv.provider;
+    }
+    apiUpdateTab(compareTab.id, {
+      title: conv.title,
+      conversation_id: id,
+      tab_type: "conversation",
+    });
+  }
+  renderTabs();
+}
+
+// ── Search (debounced) ────────────────────────────────────────────────────────
+
+let debounce;
+function syncSearchClearButton() {
+  if (searchClearBtn) searchClearBtn.hidden = !searchEl.value;
+}
+
+function setSimpleSearchOpen(open, { focus = false } = {}) {
+  if (!simpleSearchPanel || !simpleSearchToggle) return;
+  simpleSearchPanel.hidden = !open;
+  simpleSearchToggle.setAttribute("aria-expanded", String(open));
+  if (open && focus) {
+    requestAnimationFrame(() => {
+      searchEl.focus();
+      searchEl.select();
+    });
+  }
+}
+
+function openSimpleSearch() {
+  if (document.body.classList.contains("sidebar-collapsed")) {
+    document.body.classList.remove("sidebar-collapsed");
+    state.preferences.sidebarCollapsed = false;
+    saveUiPreferences({ sidebarCollapsed: false });
+  }
+  // Only one search at a time: opening Advanced Search closes this one, so
+  // opening this one closes Advanced Search.
+  if (window.advancedSearchController?.isOpen()) {
+    window.advancedSearchController.close();
+  }
+  setSimpleSearchOpen(true, { focus: true });
+}
+
+function closeSimpleSearch() {
+  setSimpleSearchOpen(false);
+  searchEl.blur();
+}
+
+function clearSimpleSearch({ reload = true } = {}) {
+  clearTimeout(debounce);
+  searchEl.value = "";
+  state.q = "";
+  syncSearchClearButton();
+  clearSearchNav();
+  syncPinnedSectionVisibility();
+  updateListSectionTitle();
+  if (reload) loadConversations(false);
+}
+
+function clearSimpleSearchForSection() {
+  const hadQuery = Boolean(state.q || searchEl.value);
+  closeSimpleSearch();
+  clearSimpleSearch({ reload: hadQuery });
+}
+
+simpleSearchToggle?.addEventListener("click", () => {
+  if (
+    simpleSearchPanel.hidden ||
+    document.body.classList.contains("sidebar-collapsed")
+  ) {
+    openSimpleSearch();
+  }
+  else closeSimpleSearch();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || simpleSearchPanel?.hidden) return;
+  e.preventDefault();
+  closeSimpleSearch();
+});
+
+searchClearBtn?.addEventListener("click", () => {
+  clearSimpleSearch();
+  searchEl.focus();
+});
+
+searchEl.addEventListener("input", () => {
+  syncSearchClearButton();
+  clearTimeout(debounce);
+  debounce = setTimeout(() => {
+    // Searching leaves the temporary bulk Preview behind.
+    exitBulkPreview({ reload: false });
+    state.q = searchEl.value.trim();
+    syncPinnedSectionVisibility();
+    updateListSectionTitle();
+    if (!state.q) {
+      clearSearchNav();
+    } else if (state.activeId) {
+      // Search term changed while a conversation is open — rebuild nav bar
+      buildSearchNavBar(state.activeId, state.q);
+    }
+    loadConversations(false);
+  }, 280);
+});
+
+searchEl.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeSimpleSearch();
+  }
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    const first = convList.querySelector(".conv-item");
+    if (first) {
+      first.click();
+      first.scrollIntoView({ block: "nearest" });
+    }
+  }
+  if (e.key === "Enter" && searchEl.value.trim()) {
+    rememberSearchQuery(searchEl.value.trim());
+    saveUiPreferences({ searchHistory: state.preferences.searchHistory });
+  }
+});
+
+viewFilterEl?.addEventListener("change", () => {
+  // Choosing a view leaves the temporary bulk Preview behind.
+  exitBulkPreview({ reload: false });
+  state.view = viewFilterEl.value || "recent";
+  state.offset = 0;
+  state.recycleSelected.clear();
+  syncPinnedSectionVisibility();
+  syncRecycleControls();
+  updateListSectionTitle();
+  // Label views are session-scoped; only base views are remembered across reloads.
+  if (!String(state.view).startsWith("label:")) {
+    saveUiPreferences({ conversationView: state.view });
+  }
+  loadConversations(false);
+});
+
+// Recycle Bin action control. The dropdown only decides what Go does; it never
+// affects whether checkboxes are shown. Both permanent-delete actions require a
+// confirmation after Go is pressed.
+recycleGoBtn?.addEventListener("click", async () => {
+  if (state.view !== "deleted") return;
+  const action = recycleActionEl.value;
+  const provider = state.providerSide;
+  const selectedIds = Array.from(state.recycleSelected);
+  const scoped = action.endsWith("-selected");
+  if (scoped && selectedIds.length === 0) {
+    resultCount.textContent = "No conversations selected";
+    setTimeout(renderResultCount, 1600);
+    return;
+  }
+  const isDelete = action.startsWith("delete");
+  const body = scoped ? { ids: selectedIds, provider } : { all: true, provider };
+
+  if (isDelete) {
+    const count = scoped ? selectedIds.length : state.total;
+    const ok = await openConfirm({
+      title: "Permanently delete?",
+      text:
+        `Permanently delete ${count.toLocaleString()} conversation` +
+        `${count !== 1 ? "s" : ""} from the Recycle Bin? ` +
+        "This removes the conversation content and cannot be undone.",
+      okLabel: "Delete permanently",
+    });
+    if (!ok) return;
+    await apiRecyclePurge(body);
+  } else {
+    await apiRecycleRestore(body);
+  }
+  state.recycleSelected.clear();
+  await loadConversations(false);
+  await refreshPinnedList();
+  await loadFolders();
+});
+
+// ── Load more ─────────────────────────────────────────────────────────────────
+
+loadMoreBtn.addEventListener("click", () => loadConversations(true));
+
+pinnedRefreshBtn?.addEventListener("click", () => refreshPinnedList());
+
+sidebarToggleBtn?.addEventListener("click", async () => {
+  const next = !document.body.classList.contains("sidebar-collapsed");
+  if (next) closeSimpleSearch();
+  document.body.classList.toggle("sidebar-collapsed", next);
+  await saveUiPreferences({ sidebarCollapsed: next });
+});
+
+function applySidebarWidth(value) {
+  const next = Math.max(themePixels("--sidebar-width-min"), Math.min(themePixels("--sidebar-width-max"), Math.round(Number(value) || themePixels("--sidebar-width-default"))));
+  state.preferences.sidebarWidth = next;
+  document.documentElement.style.setProperty("--sidebar-w", `${next}px`);
+  const range = $("setting-sidebar-width");
+  const number = $("setting-sidebar-width-number");
+  if (range) range.value = String(next);
+  if (number && document.activeElement !== number) number.value = String(next);
+  return next;
+}
+
+const sidebarWidthRange = $("setting-sidebar-width");
+const sidebarWidthNumber = $("setting-sidebar-width-number");
+for (const input of [sidebarWidthRange, sidebarWidthNumber]) {
+  if (!input) continue;
+  input.min = themeValue("--sidebar-width-min").replace("px", "");
+  input.max = themeValue("--sidebar-width-max").replace("px", "");
+}
+
+sidebarWidthRange?.addEventListener("input", () => {
+  applySidebarWidth(sidebarWidthRange.value);
+});
+sidebarWidthRange?.addEventListener("change", () => {
+  saveUiPreferences({ sidebarWidth: state.preferences.sidebarWidth });
+});
+sidebarWidthNumber?.addEventListener("input", () => {
+  const value = Number(sidebarWidthNumber.value);
+  if (value >= themePixels("--sidebar-width-min") && value <= themePixels("--sidebar-width-max")) applySidebarWidth(value);
+});
+sidebarWidthNumber?.addEventListener("change", () => {
+  const next = applySidebarWidth(sidebarWidthNumber.value);
+  sidebarWidthNumber.value = String(next);
+  saveUiPreferences({ sidebarWidth: next });
+});
+
+if (sidebarResizeHandle) {
+  setupResizeHandle(sidebarResizeHandle, {
+    label: "Conversation sidebar width", orientation: "vertical", controls: "sidebar",
+    getValue: () => state.preferences.sidebarWidth,
+    getBounds: () => [themePixels("--sidebar-width-min"), themePixels("--sidebar-width-max")],
+    setValue: (width) => {
+      const next = applySidebarWidth(width);
+      saveUiPreferences({ sidebarWidth: next });
+    },
+  });
+  let dragging = false;
+  sidebarResizeHandle.addEventListener("mousedown", (e) => {
+    dragging = true;
+    document.body.classList.add("resizing-columns");
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging || document.body.classList.contains("sidebar-collapsed"))
+      return;
+    const sidebarLeft = $("sidebar").getBoundingClientRect().left;
+    applySidebarWidth(e.clientX - sidebarLeft);
+  });
+  document.addEventListener("mouseup", async () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("resizing-columns");
+    await saveUiPreferences({ sidebarWidth: state.preferences.sidebarWidth });
+  });
+}
+
+// ── Keyboard navigation ───────────────────────────────────────────────────────
+
+// True for anything the user types into: the search box, a rename dialog, the
+// model form's fields. Shortcuts must not fire from these — bare "/" and the
+// arrows would otherwise steal focus mid-word and make text like "React/Vue"
+// impossible to type.
+function isTextEntryTarget(el) {
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  const tag = el.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT") return true;
+  // Buttons and checkboxes are inputs too, but nothing is typed into them.
+  return (
+    tag === "INPUT" &&
+    !["button", "submit", "reset", "checkbox", "radio"].includes(el.type)
+  );
+}
+
+document.addEventListener("keydown", (e) => {
+  // Don't intercept while the user is typing into any field
+  if (e.defaultPrevented || isTextEntryTarget(e.target) ||
+      e.target.closest('button, a, [role="button"], [role="separator"], [role="dialog"]')) return;
+
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+    e.preventDefault();
+    sidebarToggleBtn?.click();
+    return;
+  }
+
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    openSimpleSearch();
+    return;
+  }
+
+  if ((e.ctrlKey || e.metaKey) && e.key === "Tab") {
+    e.preventDefault();
+    const items = state.tabs.filter(isTopTab);
+    if (!items.length) return;
+    const idx = items.findIndex((t) => t.conversation_id === state.activeId);
+    const next = items[(idx + 1) % items.length];
+    openConversation(next.conversation_id, findConvItemEl(next.conversation_id));
+    return;
+  }
+
+  if (e.key === "/") {
+    e.preventDefault();
+    openSimpleSearch();
+    return;
+  }
+
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const items = [...convList.querySelectorAll(".conv-item")];
+    const idx = items.findIndex((el) => el.classList.contains("active"));
+    const next = e.key === "ArrowDown" ? items[idx + 1] : items[idx - 1];
+    if (next) {
+      next.click();
+      next.scrollIntoView({ block: "nearest" });
+    }
+  }
+});
+
+// ── Media hub ────────────────────────────────────────────────────────────────
+
+function resolveConversationSidebarEl(convId) {
+  return (
+    [...document.querySelectorAll(".conv-item[data-id]")].find(
+      (el) => el.dataset.id === convId,
+    ) || null
+  );
+}
+
+function mediaHubJumpToConversation(convId, seq = null) {
+  return openConversation(convId, resolveConversationSidebarEl(convId), seq);
+}
+
+function mediaHubItemMeta(item) {
+  const bits = [];
+  if (item.kind === "artifact") {
+    bits.push("Artifact");
+  }
+  if (item.kind === "image") {
+    bits.push("Image");
+  } else if (item.kind === "attachment") {
+    bits.push("Attachment");
+  }
+  if (item.type) bits.push(item.type);
+  if (item.lang) bits.push(item.lang);
+  if (item.role) bits.push(item.role);
+  if (item.seq != null) bits.push(`msg #${item.seq}`);
+  return bits.filter(Boolean).join(" · ");
+}
+
+function renderMediaHubItem(item) {
+  const row = document.createElement("div");
+  row.className = "media-hub-item";
+
+  const main = document.createElement("button");
+  main.type = "button";
+  main.className = "media-hub-item-main";
+
+  const iconWrap = document.createElement("span");
+  iconWrap.className = "media-hub-item-icon";
+  const previewUrl =
+    item.kind === "image" ? _fileUrl({ name: item.name }) : null;
+  if (previewUrl) {
+    const image = document.createElement("img");
+    image.src = previewUrl;
+    image.alt = item.name;
+    image.loading = "lazy";
+    image.addEventListener("error", () => {
+      iconWrap.textContent = "Image unavailable";
+    }, { once: true });
+    iconWrap.appendChild(image);
+  } else {
+    iconWrap.textContent = fileIcon(item.type || item.name);
+  }
+
+  const textWrap = document.createElement("span");
+  textWrap.className = "media-hub-item-text";
+  const titleEl = document.createElement("span");
+  titleEl.className = "media-hub-item-title";
+  titleEl.textContent =
+    item.name || item.title || item.artifact_id || "Media item";
+  const metaEl = document.createElement("span");
+  metaEl.className = "media-hub-item-meta";
+  metaEl.textContent = mediaHubItemMeta(item);
+  textWrap.append(titleEl, metaEl);
+  if (item.context) {
+    const ctxEl = document.createElement("span");
+    ctxEl.className = "media-hub-item-context";
+    ctxEl.textContent = item.context + (item.context.length >= 120 ? "…" : "");
+    textWrap.appendChild(ctxEl);
+  }
+
+  main.append(iconWrap, textWrap);
+  main.addEventListener("click", (e) => {
+    e.stopPropagation();
+    mediaHubJumpToConversation(item.conv_id, item.seq ?? item.msg_seq ?? null);
+  });
+
+  const actions = document.createElement("div");
+  actions.className = "media-hub-item-actions";
+
+  const jumpBtn = document.createElement("button");
+  jumpBtn.type = "button";
+  jumpBtn.className = "media-hub-item-action";
+  jumpBtn.textContent = "Jump";
+  jumpBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    mediaHubJumpToConversation(item.conv_id, item.seq ?? item.msg_seq ?? null);
+  });
+  actions.appendChild(jumpBtn);
+
+  if (item.kind === "artifact" && item.artifact_id) {
+    const artifactBtn = document.createElement("button");
+    artifactBtn.type = "button";
+    artifactBtn.className = "media-hub-item-action";
+    artifactBtn.textContent = "Artifact";
+    artifactBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openArtifactTab(item.conv_id, item.artifact_id, item.name || item.artifact_id);
+    });
+    actions.appendChild(artifactBtn);
+  }
+
+  row.append(main, actions);
+  return row;
+}
+
+function renderMediaHubGroup(group) {
+  const groupEl = document.createElement("div");
+  groupEl.className = "media-hub-group";
+
+  const titleBar = document.createElement("div");
+  titleBar.className = "media-hub-group-title";
+
+  const titleBtn = document.createElement("button");
+  titleBtn.type = "button";
+  titleBtn.className = "media-hub-conv-link";
+  titleBtn.textContent = group.conv_title;
+  titleBtn.addEventListener("click", () => {
+    const firstSeq = group.items.find((item) => item.seq != null)?.seq ?? null;
+    mediaHubJumpToConversation(group.conv_id, firstSeq);
+  });
+
+  const summary = document.createElement("span");
+  summary.className = "media-hub-group-summary";
+  const count = group.items.length;
+  summary.textContent = `${count} item${count === 1 ? "" : "s"} · ${formatDate(group.update_time)}`;
+
+  titleBar.append(titleBtn, summary);
+  groupEl.appendChild(titleBar);
+
+  const preview = document.createElement("div");
+  preview.className = "media-hub-group-preview";
+  if (group.preview) preview.textContent = group.preview;
+  groupEl.appendChild(preview);
+
+  const itemsWrap = document.createElement("div");
+  itemsWrap.className = "media-hub-items";
+  for (const item of group.items) {
+    itemsWrap.appendChild(renderMediaHubItem(item));
+  }
+  groupEl.appendChild(itemsWrap);
+  return groupEl;
+}
+
+function renderMediaHubSection(section, data) {
+  const sectionEl = document.createElement("section");
+  sectionEl.className = "media-hub-section";
+
+  const header = document.createElement("div");
+  header.className = "media-hub-section-header";
+
+  const headingWrap = document.createElement("div");
+  headingWrap.className = "media-hub-section-heading-wrap";
+  const heading = document.createElement("div");
+  heading.className = "media-hub-section-heading";
+  heading.textContent = `${section.title} (${section.count || 0})`;
+  const meta = document.createElement("div");
+  meta.className = "media-hub-section-meta";
+  meta.textContent = section.meta || "";
+  headingWrap.append(heading, meta);
+
+  header.appendChild(headingWrap);
+  sectionEl.appendChild(header);
+
+  if (section.groups?.length) {
+    for (const group of section.groups) {
+      sectionEl.appendChild(renderMediaHubGroup(group));
+    }
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "no-results media-hub-empty";
+    empty.textContent = `No ${section.title.toLowerCase()} found.`;
+    sectionEl.appendChild(empty);
+  }
+
+  return sectionEl;
+}
+
+function renderMediaHubSwitcher(data) {
+  const switcher = document.createElement("div");
+  switcher.className = "media-hub-switcher";
+
+  const sections = data.sections || [];
+  const unlinked = data.unlinked_images || [];
+  const buttons = sections.map((section) => ({
+    key: section.key,
+    label: `${section.title} (${section.count || 0} loaded)`,
+  }));
+  buttons.push({
+    key: "unlinked",
+    label: `Unlinked Images (${data.unlinked_total || 0})`,
+  });
+
+  for (const btnSpec of buttons) {
+    if (btnSpec.key === "unlinked" && !unlinked.length) continue;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className =
+      "media-hub-switcher-btn" +
+      (state.mediaHub.activeSectionKey === btnSpec.key ? " active" : "");
+    btn.textContent = btnSpec.label;
+    btn.addEventListener("click", () => {
+      state.mediaHub.activeSectionKey = btnSpec.key;
+      renderMediaHub(data);
+    });
+    switcher.appendChild(btn);
+  }
+
+  return switcher;
+}
+
+function renderMediaHub(data) {
+  const sections = data.sections || [];
+  const unlinked = data.unlinked_images || [];
+  galleryGrid.innerHTML = "";
+
+  galleryGrid.appendChild(renderMediaHubSwitcher(data));
+  if (data.next_offset != null) {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "import-review-btn";
+    more.textContent = "Load more media";
+    more.addEventListener("click", async () => {
+      more.disabled = true;
+      try { await loadMoreMedia(data); }
+      finally { more.disabled = false; }
+    });
+    galleryGrid.appendChild(more);
+  }
+
+  const activeKey = state.mediaHub.activeSectionKey || "images";
+  const section = sections.find((s) => s.key === activeKey);
+
+  if (activeKey === "unlinked") {
+    const rawSection = document.createElement("section");
+    rawSection.className = "media-hub-section";
+    const header = document.createElement("div");
+    header.className = "media-hub-section-header";
+    const headingWrap = document.createElement("div");
+    headingWrap.className = "media-hub-section-heading-wrap";
+    const heading = document.createElement("div");
+    heading.className = "media-hub-section-heading";
+    heading.textContent = `Unlinked Images (${unlinked.length})`;
+    const meta = document.createElement("div");
+    meta.className = "media-hub-section-meta";
+    meta.textContent =
+      "Images found on disk without a traced source conversation.";
+    headingWrap.append(heading, meta);
+    header.appendChild(headingWrap);
+    rawSection.appendChild(header);
+
+    const rawGrid = document.createElement("div");
+    rawGrid.className = "media-hub-raw-grid";
+    for (const img of unlinked) {
+      const a = document.createElement("a");
+      a.href = img.url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.className = "gallery-thumb media-hub-raw-thumb";
+      a.innerHTML = `<img src="${img.url}" alt="${escHtml(img.filename)}"><span>${escHtml(img.filename)}</span>`;
+      rawGrid.appendChild(a);
+    }
+    rawSection.appendChild(rawGrid);
+    galleryGrid.appendChild(rawSection);
+    return;
+  }
+
+  if (!section) {
+    galleryGrid.innerHTML =
+      '<div class="no-results media-hub-empty">No media found for this category.</div>';
+    return;
+  }
+
+  galleryGrid.appendChild(renderMediaHubSection(section, data));
+}
+
+async function loadMoreMedia(data) {
+  if (data.provider !== state.providerSide || state.mediaHub.data !== data) return;
+  const provider = data.provider;
+  const next = await apiRequest(`/api/gallery?${new URLSearchParams({ provider, offset: data.next_offset })}`, { action: "Load more media" });
+  if (provider !== state.providerSide || state.activeSpecialView !== "gallery" || state.mediaHub.data !== data) return;
+  for (const section of next.sections) {
+    const old = data.sections.find(s => s.key === section.key);
+    for (const group of section.groups) {
+      const existing = old.groups.find(g => g.conv_id === group.conv_id);
+      if (existing) existing.items.push(...group.items); else old.groups.push(group);
+    }
+    old.count += section.count;
+  }
+  data.unlinked_images.push(...next.unlinked_images);
+  data.next_offset = next.next_offset;
+  renderMediaHub(data);
+}
+
+let galleryRequest = 0;
+async function openGallery(fromButton = false) {
+  if (typeof summaryHasUnsavedChanges === "function" && summaryHasUnsavedChanges()) {
+    const r = await openSummaryUnsavedModal();
+    if (r === "cancel") return;
+    if (r === "save") await saveAllUnsaved();
+  }
+  if (typeof closeSummaryPanel === "function") closeSummaryPanel();
+  if (!(await leaveNotesForSpecialView())) return;
+  if (fromButton && state.activeSpecialView === "gallery") {
+    await returnFromSpecialView();
+    return;
+  }
+  rememberReturnTab();
+  state.activeSpecialView = "gallery";
+  state.activeTabId = null;
+  document
+    .querySelectorAll(".conv-item.active")
+    .forEach((el) => el.classList.remove("active"));
+  state.activeId = null;
+  await ensureSpecialTab("gallery", "Media Hub");
+
+  hideAllPanels();
+  galleryPanel.hidden = false;
+
+  galleryGrid.innerHTML = '<div class="loading">Loading…</div>';
+  const provider = state.providerSide;
+  const request = ++galleryRequest;
+  let data;
+  try {
+    data = await apiRequest(`/api/gallery?${new URLSearchParams({ provider })}`, {
+      action: "Open Media Hub",
+      notify: false,
+    });
+  } catch (e) {
+    if (request !== galleryRequest || provider !== state.providerSide || state.activeSpecialView !== "gallery") return;
+    galleryGrid.innerHTML = "";
+    const msg = document.createElement("div");
+    msg.className = "no-results";
+    msg.textContent = e.userMessage || API_MESSAGES.load;
+    galleryGrid.appendChild(msg);
+    return;
+  }
+  if (request !== galleryRequest || provider !== state.providerSide || state.activeSpecialView !== "gallery") return;
+  data.provider = provider;
+  state.mediaHub.data = data;
+
+  const sections = data.sections || [];
+  const unlinked = data.unlinked_images || [];
+  if (!sections.length && !unlinked.length) {
+    galleryGrid.innerHTML =
+      '<div class="no-results">No conversation-linked media found.</div>';
+    return;
+  }
+
+  if (
+    !sections.some((section) => section.key === state.mediaHub.activeSectionKey)
+  ) {
+    state.mediaHub.activeSectionKey =
+      sections[0]?.key || (unlinked.length ? "unlinked" : "images");
+  }
+
+  renderMediaHub(data);
+}
+
+// The Media Hub is now reached from the briefcase menu; its old footer icon is
+// gone, so wire the button only if it exists.
+$("gallery-btn")?.addEventListener("click", () => openGallery(true));
+
+// ── Attachment Report ─────────────────────────────────────────────────────────
+
+async function openAttReport(forceRefresh, fromButton = false) {
+  if (!(await leaveNotesForSpecialView())) return;
+  if (fromButton && state.activeSpecialView === "attachment_report") {
+    await returnFromSpecialView();
+    return;
+  }
+  rememberReturnTab();
+  state.activeSpecialView = "attachment_report";
+  state.activeTabId = null;
+  document
+    .querySelectorAll(".conv-item.active")
+    .forEach((el) => el.classList.remove("active"));
+  state.activeId = null;
+  await ensureSpecialTab("attachment_report", "Attachment Report");
+  hideAllPanels();
+  attReportPanel.hidden = false;
+
+  if (!forceRefresh && attReportContent.dataset.loaded === state.providerSide) return;
+  await loadAttReport();
+}
+
+// The report lists the side the sidebar shows (Claude or ChatGPT) and leaves
+// out the Recycle Bin, like every other list. `loaded` holds the side it shows.
+async function loadAttReport() {
+  const side = state.providerSide;
+  attReportContent.innerHTML = '<div class="loading">Loading…</div>';
+  let data;
+  try {
+    const p = new URLSearchParams({ provider: side });
+    data = await apiRequest(`/api/attachment-report?${p}`, {
+      action: "Open Attachment Report",
+      notify: false,
+    });
+  } catch (e) {
+    if (side !== state.providerSide) return; // a newer load is on its way
+    attReportContent.innerHTML = `<div class="no-results">The attachment report couldn't be loaded. Please try Refresh.</div>`;
+    attReportMeta.textContent = "Failed to load report.";
+    return; // never leave the panel stuck on "Loading…"
+  }
+  if (side !== state.providerSide) return; // a newer load is on its way
+  attReportContent.innerHTML = "";
+
+  const items = data.missing || [];
+  attReportMeta.textContent = items.length
+    ? `${items.length} attachment(s) cannot be displayed (no exported content and not found in source/files/)`
+    : "✅ All attachments resolved — none missing.";
+
+  if (!items.length) {
+    attReportContent.dataset.loaded = side;
+    return;
+  }
+
+  // Group by conversation
+  const groups = new Map();
+  for (const it of items) {
+    if (!groups.has(it.conv_id))
+      groups.set(it.conv_id, { title: it.conv_title, items: [] });
+    groups.get(it.conv_id).items.push(it);
+  }
+
+  for (const [convId, { title, items: convItems }] of groups) {
+    const groupEl = document.createElement("div");
+    groupEl.className = "att-report-group";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "att-report-conv-title";
+    titleEl.innerHTML = `<button class="att-report-conv-link" data-id="${escHtml(convId)}">${escHtml(title)}</button>`;
+    groupEl.appendChild(titleEl);
+
+    for (const it of convItems) {
+      const row = document.createElement("div");
+      row.className = "att-report-row";
+      const typeLabel = it.file_type ? `(${it.file_type})` : "";
+      row.innerHTML = `
+        <span class="att-report-icon">${fileIcon(it.file_type || it.file_name)}</span>
+        <span class="att-report-name">${escHtml(it.file_name)} <span class="att-report-type">${escHtml(typeLabel)}</span></span>
+        ${it.context ? `<span class="att-report-ctx">${escHtml(it.context)}…</span>` : ""}
+        <button class="att-upload-btn" title="Upload this file to source/files/">📎 Upload</button>`;
+
+      makeKeyboardAction(row.querySelector(".att-report-name"), `Open attachment ${it.file_name} in ${title}`);
+      row.querySelector(".att-report-name").addEventListener("click", () => {
+        openConversation(convId, resolveConversationSidebarEl(convId), it.seq);
+      });
+
+      // Upload button: trigger hidden file input
+      row.querySelector(".att-upload-btn").addEventListener("click", () => {
+        const inp = document.createElement("input");
+        inp.type = "file";
+        inp.accept = "*/*";
+        inp.addEventListener("change", async () => {
+          const file = inp.files[0];
+          if (!file) return;
+          const upload = (replace) => {
+            const fd = new FormData();
+            fd.append("file", file, it.file_name);
+            fd.append("name", it.file_name);
+            if (replace) fd.append("replace", "1");
+            return apiRequest("/api/upload-file", {
+              method: "POST",
+              body: fd,
+              action: "Upload missing file",
+              // A file with the same name is already saved: ask first.
+              expect: replace ? [] : [409],
+            });
+          };
+          const btn = row.querySelector(".att-upload-btn");
+          btn.disabled = true;
+          btn.textContent = "Uploading…";
+          try {
+            let res;
+            try {
+              res = await upload(false);
+            } catch (e) {
+              if (e.status !== 409) throw e;
+              const ok = await openConfirm({
+                title: "Replace the saved file?",
+                text: `${e.userMessage} Replace it with the file you picked?`,
+                okLabel: "Replace",
+              });
+              if (!ok) {
+                btn.disabled = false;
+                btn.textContent = "📎 Upload";
+                return;
+              }
+              res = await upload(true);
+            }
+            if (res.ok) {
+              row.classList.add("att-row-resolved");
+              btn.textContent = "✅ Uploaded";
+              // Invalidate cache so next open re-fetches fresh data
+              delete attReportContent.dataset.loaded;
+            } else {
+              btn.disabled = false;
+              btn.textContent = "📎 Upload";
+              showAppNotice(res.error || "The file wasn't uploaded. Please try again.");
+            }
+          } catch (e) {
+            // apiRequest has already said what went wrong.
+            btn.disabled = false;
+            btn.textContent = "📎 Upload";
+          }
+        });
+        inp.click();
+      });
+
+      groupEl.appendChild(row);
+    }
+    attReportContent.appendChild(groupEl);
+  }
+
+  // Wire conversation title click → open conversation
+  attReportContent.querySelectorAll(".att-report-conv-link").forEach((btn) => {
+    btn.addEventListener("click", () =>
+      openConversation(
+        btn.dataset.id,
+        resolveConversationSidebarEl(btn.dataset.id),
+        null,
+      ),
+    );
+  });
+
+  attReportContent.dataset.loaded = side;
+}
+
+$("att-report-refresh-btn").addEventListener("click", () =>
+  openAttReport(true),
+);
+
+// ── Error Log ───────────────────────────────────────────────────────────────────
+// The 10 most recent error groups from logs/errors.json (AUDIT.md #22, #35).
+// Everything in an entry is shown as plain text, never as HTML: error text can
+// contain anything.
+
+function errorLogTime(iso) {
+  return String(iso || "")
+    .replace("T", " ")
+    .replace(/([+-]\d\d:\d\d|Z)$/, " $1");
+}
+
+function errorLogIds(ids) {
+  return Object.entries(ids || {})
+    .map(([k, v]) => `${k}: ${[].concat(v).join(", ")}`)
+    .join("; ");
+}
+
+function errorLogEntryText(e) {
+  const lines = [
+    `Error ID: ${e.error_id || "?"}`,
+    `When: ${errorLogTime(e.when)}`,
+    `Where: ${e.where || "?"}`,
+    `What: ${e.error_type || "?"}: ${e.message || ""}`,
+    `Location: ${e.location || "?"}`,
+    `Doing: ${e.action || "?"}${e.status != null ? ` (status ${e.status})` : ""}`,
+  ];
+  const ids = errorLogIds(e.ids);
+  if (ids) lines.push(`IDs: ${ids}`);
+  const shape = Object.entries(e.request_shape || {})
+    .map(([k, v]) =>
+      typeof v === "object" && v
+        ? `${k}: {${Object.entries(v).map(([a, b]) => `${a}: ${b}`).join(", ")}}`
+        : `${k}: ${v}`,
+    )
+    .join(", ");
+  if (shape) lines.push(`Request shape: ${shape}`);
+  lines.push(`App version: ${e.app_version || "?"}`);
+  const dbs = Object.entries(e.db_versions || {})
+    .map(([k, v]) => `${k} v${v}`)
+    .join(", ");
+  if (dbs) lines.push(`Database versions: ${dbs}`);
+  const sys = e.system || {};
+  lines.push(`System: Python ${sys.python || "?"}, SQLite ${sys.sqlite || "?"}, ${sys.os || "?"}`);
+  if (e.browser) {
+    const b = e.browser;
+    lines.push(`Browser: ${b.name || "?"} ${b.version || ""}, window ${b.window || "?"}, screen ${b.screen || "?"}`);
+  }
+  const frames = e.traceback || [];
+  if (frames.length) {
+    lines.push(e.where === "browser" ? "Stack (outermost first):" : "Traceback (outermost first):");
+    for (const f of frames) {
+      lines.push(`  ${f.file}:${f.line} in ${f.function}`);
+      if (f.code) lines.push(`    ${f.code}`);
+    }
+  } else if (e.stack) {
+    lines.push("Stack:", e.stack);
+  }
+  return lines.join("\n");
+}
+
+function errorLogHeading(g) {
+  const lines = [`Last happened: ${errorLogTime(g.last_seen)}`];
+  const counts = [];
+  if ((g.count || 0) > 1) counts.push(`Happened ${g.count} times`);
+  counts.push(`First happened: ${errorLogTime(g.first_seen)}`);
+  return { title: lines[0], counts: counts.join(" · ") };
+}
+
+// What the block shows: the latest occurrence in full, then the other recent
+// occurrences by error ID, with their IDs when those differ.
+function errorLogShownText(g) {
+  const recent = (g.recent || []).slice().reverse();
+  if (!recent.length) return "";
+  const latest = recent[0];
+  const parts = [errorLogEntryText(latest)];
+  const others = recent.slice(1);
+  if (others.length) {
+    parts.push("", "Other recent occurrences:");
+    const latestIds = errorLogIds(latest.ids);
+    for (const e of others) {
+      const ids = errorLogIds(e.ids);
+      parts.push(
+        `  ${e.error_id} at ${errorLogTime(e.when)}${ids && ids !== latestIds ? ` (IDs: ${ids})` : ""}`,
+      );
+    }
+  }
+  return parts.join("\n");
+}
+
+// What Copy puts on the clipboard: the counts and every field of each recent
+// occurrence, newest first.
+function errorLogCopyText(g) {
+  const head = errorLogHeading(g);
+  const recent = (g.recent || []).slice().reverse();
+  const parts = [head.title, head.counts, ""];
+  recent.forEach((e, i) => {
+    if (i) parts.push("", "----", "");
+    parts.push(errorLogEntryText(e));
+  });
+  return parts.join("\n");
+}
+
+async function copyPlainText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (_) {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.className = "sr-only";
+    document.body.appendChild(area);
+    area.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch (_) {
+      ok = false;
+    }
+    area.remove();
+    return ok;
+  }
+}
+
+async function openErrorLog() {
+  if (!(await leaveNotesForSpecialView())) return;
+  rememberReturnTab();
+  state.activeSpecialView = "error_log";
+  state.activeTabId = null;
+  document
+    .querySelectorAll(".conv-item.active")
+    .forEach((el) => el.classList.remove("active"));
+  state.activeId = null;
+  await ensureSpecialTab("error_log", "Error Log");
+  hideAllPanels();
+  errorLogPanel.hidden = false;
+  await renderErrorLog();
+}
+
+async function renderErrorLog() {
+  errorLogContent.innerHTML = '<div class="loading">Loading…</div>';
+  let groups;
+  try {
+    const data = await apiRequest("/api/error-log", {
+      action: "Open Error Log",
+      notify: false,
+    });
+    groups = data.groups || [];
+  } catch (e) {
+    errorLogContent.textContent = "";
+    const msg = document.createElement("div");
+    msg.className = "no-results";
+    msg.textContent = e.userMessage || API_MESSAGES.load;
+    errorLogContent.appendChild(msg);
+    return;
+  }
+  errorLogContent.textContent = "";
+  $("error-log-clear-btn").disabled = !groups.length;
+  if (!groups.length) {
+    const empty = document.createElement("p");
+    empty.className = "error-log-empty";
+    empty.textContent = "No errors recorded.";
+    errorLogContent.appendChild(empty);
+    return;
+  }
+  const list = document.createElement("div");
+  list.className = "error-log-list";
+  groups.forEach((g, i) => {
+    const block = document.createElement("section");
+    block.className = "error-log-block";
+    const titleId = `error-log-title-${i}`;
+    block.setAttribute("aria-labelledby", titleId);
+    const head = errorLogHeading(g);
+    const title = document.createElement("h2");
+    title.className = "error-log-title";
+    title.id = titleId;
+    title.textContent = head.title;
+    const counts = document.createElement("p");
+    counts.className = "error-log-counts";
+    counts.textContent = head.counts;
+    const text = document.createElement("pre");
+    text.className = "error-log-text";
+    text.textContent = errorLogShownText(g);
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "error-log-btn";
+    copy.textContent = "Copy";
+    copy.setAttribute("aria-label", `Copy the error from ${head.title.replace("Last happened: ", "")}`);
+    copy.addEventListener("click", async () => {
+      const ok = await copyPlainText(errorLogCopyText(g));
+      errorLogStatus.textContent = "";
+      errorLogStatus.textContent = ok ? "Copied." : "Couldn't copy. Select the text and copy it instead.";
+      copy.textContent = ok ? "Copied" : "Copy";
+      setTimeout(() => {
+        copy.textContent = "Copy";
+      }, 2000);
+    });
+    block.append(title, counts, text, copy);
+    list.appendChild(block);
+  });
+  errorLogContent.appendChild(list);
+}
+
+$("error-log-clear-btn")?.addEventListener("click", async () => {
+  const ok = await openConfirm({
+    title: "Clear all errors?",
+    text: "This can't be undone.",
+    okLabel: "Clear log",
+  });
+  if (!ok) return;
+  try {
+    await apiRequest("/api/error-log", { method: "DELETE", action: "Clear error log" });
+  } catch (_) {
+    return;
+  }
+  errorLogStatus.textContent = "The error log is empty.";
+  await renderErrorLog();
+});
+
+// ── Import Audit ────────────────────────────────────────────────────────────────
+// An inspection view: shows how every conversation in conversations.json was
+// imported, and lets you drill into each status to see (and open) the records
+// that came in as fallback / metadata_only / parse_error.
+
+// Chrome setup shared by opening the audit panel fresh and restoring it on a
+// browser Back/Forward (popstate) — only the content rendered inside differs.
+async function showImportAuditPanel() {
+  if (!(await leaveNotesForSpecialView())) return false;
+  rememberReturnTab();
+  state.activeSpecialView = "import_audit";
+  state.activeTabId = null;
+  document
+    .querySelectorAll(".conv-item.active")
+    .forEach((el) => el.classList.remove("active"));
+  state.activeId = null;
+  await ensureSpecialTab("import_audit", "Import Audit");
+  hideAllPanels();
+  importAuditPanel.hidden = false;
+  return true;
+}
+
+async function openImportAudit() {
+  if (!(await showImportAuditPanel())) return;
+  renderImportAuditSummary();
+}
+
+async function renderImportAuditSummary() {
+  importAuditContent.innerHTML = '<div class="loading">Loading…</div>';
+  let data;
+  try {
+    data = await apiRequest("/api/import-audit", {
+      action: "Open Import Audit",
+      notify: false,
+    });
+  } catch (e) {
+    importAuditContent.innerHTML = `<div class="no-results">${escHtml(e.userMessage || API_MESSAGES.load)}</div>`;
+    return;
+  }
+  if (data.error) {
+    importAuditContent.innerHTML = `<div class="no-results">${escHtml(data.error)}</div>`;
+    return;
+  }
+
+  const rows = [
+    { key: null, label: "Total conversations", n: data.total },
+    { key: "normal", label: "Normal", n: data.normal },
+    { key: "fallback", label: "Fallback", n: data.fallback },
+    { key: "metadata_only", label: "Metadata only", n: data.metadata_only },
+    { key: "parse_error", label: "Parse errors", n: data.parse_error },
+  ];
+
+  importAuditContent.innerHTML = "";
+  const listEl = document.createElement("div");
+  listEl.className = "audit-summary";
+  for (const r of rows) {
+    const clickable = r.key !== null;
+    const row = document.createElement(clickable ? "button" : "div");
+    row.className =
+      "audit-row" +
+      (clickable ? " audit-row-clickable" : " audit-row-total");
+    row.innerHTML = `<span class="audit-row-label">${escHtml(r.label)}</span><span class="audit-row-count">${(r.n || 0).toLocaleString()}</span>`;
+    if (clickable) {
+      row.title = `Browse the "${r.label}" conversations`;
+      row.addEventListener("click", () =>
+        renderImportAuditList(r.key, r.label),
+      );
+    }
+    listEl.appendChild(row);
+  }
+  importAuditContent.appendChild(listEl);
+
+  if (data.synthetic) {
+    const note = document.createElement("div");
+    note.className = "audit-note";
+    note.textContent = `${data.synthetic.toLocaleString()} of these have synthetic IDs (no original Claude UUID).`;
+    importAuditContent.appendChild(note);
+  }
+
+  if (data.collapsed) {
+    // The totals above count source objects; the database stores one row per
+    // distinct ID. Say so, rather than letting the two numbers silently differ.
+    const note = document.createElement("div");
+    note.className = "audit-note";
+    note.textContent =
+      `${data.collapsed.toLocaleString()} shared an ID with another record and were ` +
+      `collapsed — ${(data.stored || 0).toLocaleString()} conversations are stored.`;
+    importAuditContent.appendChild(note);
+  }
+
+  // Content the viewer leaves out, counted over every imported file, so a
+  // change in a future export shows here instead of vanishing (AUDIT.md #12).
+  const typeList = (found) =>
+    Object.entries(found || {})
+      .map(([kind, n]) => `${kind} (${Number(n).toLocaleString()})`)
+      .join(", ");
+  const dropped = typeList(data.dropped_types);
+  if (dropped) {
+    const note = document.createElement("div");
+    note.className = "audit-note";
+    note.textContent = `Left out on purpose (not shown in chats): ${dropped}.`;
+    importAuditContent.appendChild(note);
+  }
+  const unknown = typeList(data.unknown_types);
+  if (unknown) {
+    const note = document.createElement("div");
+    note.className = "audit-note";
+    note.textContent =
+      `Content of a kind this app doesn't know yet, so it isn't shown: ${unknown}. ` +
+      "The export format may have changed.";
+    importAuditContent.appendChild(note);
+  }
+}
+
+// `push`/`scrollTop` drive the browser-history integration: a forward click
+// on a summary row pushes a new history entry for this category so a later
+// Back returns to it; restoring that same entry on popstate re-renders it
+// without pushing again and puts the scroll position back where it was.
+async function renderImportAuditList(
+  status,
+  label,
+  { push = true, scrollTop = null } = {},
+) {
+  importAuditContent.innerHTML = '<div class="loading">Loading…</div>';
+  let data;
+  try {
+    data = await apiRequest(
+      `/api/import-audit?status=${encodeURIComponent(status)}`,
+      { action: "Open Import Audit category", notify: false },
+    );
+  } catch (e) {
+    importAuditContent.innerHTML = `<div class="no-results">${escHtml(e.userMessage || API_MESSAGES.load)}</div>`;
+    return;
+  }
+
+  if (push) {
+    history.pushState(
+      { auditNav: true, view: "audit-list", status, label },
+      "",
+    );
+  }
+
+  importAuditContent.innerHTML = "";
+
+  const header = document.createElement("div");
+  header.className = "audit-list-header";
+  const back = document.createElement("button");
+  back.className = "audit-back-btn";
+  back.textContent = "← Back to summary";
+  back.addEventListener("click", () => renderImportAuditSummary());
+  header.appendChild(back);
+  const title = document.createElement("div");
+  title.className = "audit-list-title";
+  const n = (data.total || 0).toLocaleString();
+  title.textContent = `${label} — ${n} conversation${data.total !== 1 ? "s" : ""}`;
+  header.appendChild(title);
+  importAuditContent.appendChild(header);
+
+  const convs = data.conversations || [];
+  if (!convs.length) {
+    const empty = document.createElement("div");
+    empty.className = "no-results";
+    empty.textContent = "No conversations in this category.";
+    importAuditContent.appendChild(empty);
+    if (scrollTop != null) importAuditContent.scrollTop = scrollTop;
+    return;
+  }
+
+  const listEl = document.createElement("div");
+  listEl.className = "audit-conv-list";
+  for (const c of convs) {
+    const item = document.createElement("button");
+    item.className = "audit-conv-item";
+    const date = formatDate(c.update_time || c.create_time);
+    const srcIdx =
+      c.source_index != null ? `source #${c.source_index}` : "source index n/a";
+    // kept === 0 marks a source object that shares its ID with another and was
+    // collapsed at import. It still opens — to the conversation that won the ID.
+    const dup =
+      c.kept === 0
+        ? '<span class="audit-conv-dup">duplicate ID — collapsed</span>'
+        : "";
+    item.innerHTML = `
+      <div class="audit-conv-title">${escHtml(c.title || "Untitled")}</div>
+      <div class="audit-conv-meta">
+        <span>${escHtml(date)}</span>
+        <span>${c.message_count} msg${c.message_count !== 1 ? "s" : ""}</span>
+        <span>${escHtml(srcIdx)}</span>
+        ${dup}
+      </div>
+      <div class="audit-conv-id">${escHtml(c.id)}</div>`;
+    item.addEventListener("click", () =>
+      openConversationFromAudit(c.id, status, label),
+    );
+    listEl.appendChild(item);
+  }
+  importAuditContent.appendChild(listEl);
+  if (scrollTop != null) importAuditContent.scrollTop = scrollTop;
+}
+
+// Opening a conversation from an audit category list snapshots that list's
+// scroll position into its (already-pushed) history entry, then pushes a
+// second entry for the conversation itself — so browser Back pops straight
+// back to the same category, scrolled to the same place.
+function openConversationFromAudit(convId, status, label) {
+  history.replaceState(
+    {
+      auditNav: true,
+      view: "audit-list",
+      status,
+      label,
+      scrollTop: importAuditContent.scrollTop,
+    },
+    "",
+  );
+  history.pushState({ auditNav: true, view: "conversation", convId }, "");
+  openConversation(convId, null);
+}
+
+// Browser Back/Forward through audit-originated navigation: restore the same
+// category list (with scroll position) or reopen the conversation, rather
+// than falling through to whatever the SPA happens to have on screen.
+let _auditRestoringCanceledPopstate = false;
+window.addEventListener("popstate", async (e) => {
+  const st = e.state;
+  if (!st || !st.auditNav) return;
+  if (_auditRestoringCanceledPopstate) {
+    _auditRestoringCanceledPopstate = false;
+    return;
+  }
+  if (st.view === "audit-list") {
+    const opened = await showImportAuditPanel();
+    if (!opened) {
+      _auditRestoringCanceledPopstate = true;
+      history.forward();
+      return;
+    }
+    renderImportAuditList(st.status, st.label, {
+      push: false,
+      scrollTop: st.scrollTop ?? 0,
+    });
+  } else if (st.view === "conversation") {
+    openConversation(st.convId, null);
+  }
+});
+
+// ── Claude model availability ────────────────────────────────────────────────
+// Each conversation can be tagged with the model(s) it was written with. Which
+// models are offered comes from the availability dates on the Add Claude Models
+// screen, and two icons flag a tagging that no longer matches those dates:
+//
+//   caution sign  a tagged model was never available during the conversation
+//   report        the tagged models don't cover the conversation end to end
+//
+// Both are dismissible per conversation, and both come back if the condition
+// clears and then goes wrong again (the server re-arms the dismissal).
+
+const ICON_CAUTION =
+  '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+  '<path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>';
+const ICON_REPORT =
+  '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+  '<path d="M15.73 3H8.27L3 8.27v7.46L8.27 21h7.46L21 15.73V8.27L15.73 3zM12 ' +
+  '17.3c-.72 0-1.3-.58-1.3-1.3s.58-1.3 1.3-1.3 1.3.58 1.3 1.3-.58 1.3-1.3 ' +
+  '1.3zm1-4.3h-2V7h2v6z"/></svg>';
+
+// Which side the UI is currently showing. Claude-only features (model tagging,
+// unverified filter) key off this, so switching to ChatGPT hides them.
+const isClaudeSide = () => state.providerSide === "claude";
+
+// The model, label, bulk and snapshot screens' server calls. A thin name for
+// apiRequest kept so those modules read as before.
+async function apiModelState(path, options = {}) {
+  return apiRequest(path, options);
+}
+
+// Load the export format once at boot; it decides whether any of this renders.
+async function loadDatasetFormat() {
+  try {
+    const data = await apiModelState("/api/claude-models");
+    state.datasetFormat = data.format === "chatgpt" ? "chatgpt" : "claude";
+    state.modelRows = data.models || [];
+  } catch {
+    state.datasetFormat = "claude";
+  }
+  if (claudeModelsMenuItem) claudeModelsMenuItem.hidden = !isClaudeSide();
+}
+
+// ── Provider toggle (ChatGPT / Claude) ───────────────────────────────────────
+
+function renderProviderToggle() {
+  document
+    .querySelectorAll("#provider-toggle .provider-seg")
+    .forEach((btn) => {
+      btn.classList.toggle(
+        "active",
+        btn.dataset.provider === state.providerSide,
+      );
+      btn.setAttribute("aria-pressed", String(btn.dataset.provider === state.providerSide));
+    });
+}
+
+async function switchProviderSide(side) {
+  if (side !== "claude" && side !== "chatgpt") return;
+  if (state.providerSide === side) return;
+  state.providerSide = side;
+  renderProviderToggle();
+  saveUiPreferences({ providerSide: side });
+  if (state.activeSpecialView === "gallery") {
+    state.mediaHub.data = null;
+    galleryGrid.innerHTML = '<div class="loading">Loading…</div>';
+    await openGallery(false);
+  }
+  // Recycle Bin selection is per side; drop it when switching sides.
+  state.recycleSelected.clear();
+  // Claude-only UI follows the active side.
+  if (claudeModelsMenuItem) claudeModelsMenuItem.hidden = !isClaudeSide();
+  // A ChatGPT dataset can never be on the Unverified (Claude models) view.
+  if (!isClaudeSide() && state.view === "unverified") {
+    state.view = "recent";
+    if (viewFilterEl) viewFilterEl.value = "recent";
+    updateListSectionTitle();
+  }
+  state.offset = 0;
+  await refreshPinnedList();
+  await loadFolders();
+  await loadConversations(false);
+  syncUnverifiedOption();
+  // Global Bookmarks is per-side too; reload it if it's the open view.
+  if (
+    state.activeSpecialView === "global_bookmarks" &&
+    typeof gbReloadForProvider === "function"
+  ) {
+    gbReloadForProvider();
+  }
+  // So is the Attachment Report.
+  if (state.activeSpecialView === "attachment_report") {
+    await loadAttReport();
+  } else {
+    delete attReportContent.dataset.loaded;
+  }
+}
+
+document
+  .querySelectorAll("#provider-toggle .provider-seg")
+  .forEach((btn) => {
+    btn.addEventListener("click", () => switchProviderSide(btn.dataset.provider));
+  });
+
+// The "Unverified Models" filter exists only while something is flagged.
+function syncUnverifiedOption() {
+  const opt = viewFilterEl?.querySelector('option[value="unverified"]');
+  if (!opt) return;
+  const show = isClaudeSide() && state.unverifiedCount > 0;
+  opt.hidden = !show;
+  if (!show && state.view === "unverified") {
+    // Nothing left to verify — fall back rather than showing an empty list.
+    // Deferred so it never reloads on top of the render that called us.
+    state.view = "recent";
+    viewFilterEl.value = "recent";
+    updateListSectionTitle();
+    setTimeout(() => loadConversations(false), 0);
+  }
+}
+
+// The warning icons shown before a conversation's name in the sidebar.
+function warningIconsHtml(conv) {
+  if (!isClaudeSide()) return "";
+  let out = "";
+  if (conv.warn_range)
+    out += `<span class="warn-icon warn-caution" title="Model outside its reported availability">${ICON_CAUTION}</span>`;
+  if (conv.warn_coverage)
+    out += `<span class="warn-icon warn-report" title="Model unavailable during entire conversation dates">${ICON_REPORT}</span>`;
+  return out;
+}
+
+// ── The model strip in the conversation header ───────────────────────────────
+// Empty conversation: a single "Select Model" dropdown. Once a model is chosen
+// it becomes plain text with an ✕ to drop it, and an unobtrusive [ + ] dropdown
+// offers the rest — which disappears when every model available during the
+// conversation is already selected.
+
+function renderModelStrip() {
+  const existing = threadMeta.querySelector(".model-strip");
+  if (existing) existing.remove();
+  const data = state.models;
+  if (!isClaudeSide() || !data || !state.activeId) return;
+  const convId = state.activeId;
+
+  const strip = document.createElement("span");
+  strip.className = "model-strip";
+  const sep = () => {
+    const s = document.createElement("span");
+    s.className = "model-sep";
+    s.textContent = "·";
+    return s;
+  };
+
+  for (const m of data.selected) {
+    strip.appendChild(sep());
+    const chip = document.createElement("span");
+    chip.className = "model-chip";
+    const name = document.createElement("span");
+    name.className = "model-chip-name";
+    name.textContent = m.name;
+    const x = document.createElement("button");
+    x.className = "model-chip-x";
+    x.type = "button";
+    x.title = `Remove ${m.name}`;
+    x.setAttribute("aria-label", `Remove ${m.name}`);
+    x.textContent = "✕";
+    x.addEventListener("click", () => removeConvModel(convId, m.model_id));
+    chip.append(name, x);
+    strip.appendChild(chip);
+  }
+
+  if (data.available.length) {
+    strip.appendChild(sep());
+    const sel = document.createElement("select");
+    const picked = data.selected.length > 0;
+    sel.className = picked ? "model-select model-select-add" : "model-select";
+    sel.title = picked ? "Add another model" : "Select the model used";
+    sel.setAttribute("aria-label", sel.title);
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = picked ? "+" : "Select Model";
+    sel.appendChild(placeholder);
+    for (const m of data.available) {
+      const opt = document.createElement("option");
+      opt.value = m.model_id;
+      opt.textContent = m.name;
+      sel.appendChild(opt);
+    }
+    sel.value = "";
+    sel.addEventListener("change", () => {
+      if (sel.value) addConvModel(convId, sel.value);
+    });
+    strip.appendChild(sel);
+  }
+
+  if (data.warn_range) {
+    const btn = document.createElement("button");
+    btn.className = "warn-icon warn-caution warn-btn";
+    btn.type = "button";
+    btn.title = "Model outside its reported availability";
+    btn.setAttribute("aria-label", "Model outside its reported availability");
+    btn.innerHTML = ICON_CAUTION;
+    btn.addEventListener("click", () => openVerifyModelDialog(convId));
+    strip.appendChild(btn);
+  }
+  if (data.warn_coverage) {
+    const btn = document.createElement("button");
+    btn.className = "warn-icon warn-report warn-btn";
+    btn.type = "button";
+    btn.title = "Model unavailable during entire conversation dates";
+    btn.setAttribute(
+      "aria-label",
+      "Model unavailable during entire conversation dates",
+    );
+    btn.innerHTML = ICON_REPORT;
+    btn.addEventListener("click", () => openCoverageDialog(convId));
+    strip.appendChild(btn);
+  }
+
+  threadMeta.appendChild(strip);
+}
+
+// ── Conversation tags ────────────────────────────────────────────────────────
+// Two independent tag sets share this row. Ordinary Tags occupy the left half;
+// Mood Tags occupy the right half and are anchored at the right edge.
+
+const TAG_GROUPS = {
+  tag: {
+    chips: () => state.tags,
+    setChips: (v) => { state.tags = v; },
+    cache: () => state.allTagsCache,
+    setCache: (v) => { state.allTagsCache = v; },
+    loadAll: () => apiAllTags(),
+    add: (convId, tag) => apiAddTag(convId, tag),
+    remove: (convId, tag) => apiRemoveTag(convId, tag),
+    datalistId: "tag-suggestions",
+    addTitle: "Add tag",
+    placeholder: "Tag name",
+  },
+  mood: {
+    chips: () => state.moodTags,
+    setChips: (v) => { state.moodTags = v; },
+    cache: () => state.allMoodTagsCache,
+    setCache: (v) => { state.allMoodTagsCache = v; },
+    loadAll: () => apiAllMoodTags(),
+    add: (convId, tag) => apiAddMoodTag(convId, tag),
+    remove: (convId, tag) => apiRemoveMoodTag(convId, tag),
+    datalistId: "mood-tag-suggestions",
+    addTitle: "Add mood tag",
+    placeholder: "Mood tag",
+  },
+};
+
+function tagChip(group, convId, tag) {
+  const chip = document.createElement("span");
+  chip.className = "tag-chip";
+  const name = document.createElement("span");
+  name.className = "tag-chip-name";
+  name.textContent = tag;
+  const x = document.createElement("button");
+  x.className = "tag-chip-x";
+  x.type = "button";
+  x.title = `Remove ${tag}`;
+  x.setAttribute("aria-label", `Remove ${tag}`);
+  x.textContent = "✕";
+  x.addEventListener("click", () => removeConvTag(group, convId, tag));
+  chip.append(name, x);
+  return chip;
+}
+
+function tagAddButton(group, convId) {
+  const addBtn = document.createElement("button");
+  addBtn.className = "tag-add-btn";
+  addBtn.type = "button";
+  addBtn.title = TAG_GROUPS[group].addTitle;
+  addBtn.setAttribute("aria-label", TAG_GROUPS[group].addTitle);
+  addBtn.textContent = "+";
+  addBtn.addEventListener("click", () => showTagInput(group, convId, addBtn));
+  return addBtn;
+}
+
+function renderThreadTags(target) {
+  const container = target || threadTags;
+  container.innerHTML = "";
+  if (!state.activeId) return;
+  const convId = state.activeId;
+
+  const left = document.createElement("div");
+  left.className = "tags-left";
+  const leftLabel = document.createElement("span");
+  leftLabel.className = "tags-label";
+  leftLabel.textContent = "Tags:";
+  left.appendChild(leftLabel);
+  for (const tag of state.tags) left.appendChild(tagChip("tag", convId, tag));
+  left.appendChild(tagAddButton("tag", convId));
+
+  const right = document.createElement("div");
+  right.className = "tags-right";
+  const strip = document.createElement("div");
+  strip.className = "tags-mood";
+  const rightLabel = document.createElement("span");
+  rightLabel.className = "tags-label";
+  rightLabel.textContent = "Mood Tags:";
+  strip.appendChild(rightLabel);
+  for (const tag of state.moodTags)
+    strip.appendChild(tagChip("mood", convId, tag));
+  strip.appendChild(tagAddButton("mood", convId));
+  right.appendChild(strip);
+
+  container.append(left, right);
+}
+
+async function showTagInput(group, convId, addBtn) {
+  const g = TAG_GROUPS[group];
+  if (g.cache() === null) {
+    g.setCache(await g.loadAll().catch(() => []));
+  }
+  const form = document.createElement("form");
+  form.className = "tag-add-form";
+  const input = document.createElement("input");
+  input.className = "tag-add-input";
+  input.type = "text";
+  input.maxLength = 40;
+  input.placeholder = g.placeholder;
+  input.setAttribute("list", g.datalistId);
+  if (!$(g.datalistId)) {
+    const datalist = document.createElement("datalist");
+    datalist.id = g.datalistId;
+    document.body.appendChild(datalist);
+  }
+  const datalist = $(g.datalistId);
+  datalist.innerHTML = "";
+  for (const t of g.cache()) {
+    if (g.chips().includes(t)) continue;
+    const opt = document.createElement("option");
+    opt.value = t;
+    datalist.appendChild(opt);
+  }
+  form.appendChild(input);
+  addBtn.replaceWith(form);
+  input.focus();
+
+  let settled = false;
+  const finish = async () => {
+    if (settled) return;
+    settled = true;
+    const tag = input.value.trim();
+    if (tag) await addConvTag(group, convId, tag);
+    else renderThreadTags();
+  };
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    finish();
+  });
+  input.addEventListener("blur", finish);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      settled = true;
+      renderThreadTags();
+    }
+  });
+}
+
+async function addConvTag(group, convId, tag) {
+  const g = TAG_GROUPS[group];
+  try {
+    const data = await g.add(convId, tag);
+    if (state.activeId !== convId) return;
+    g.setChips(data.tags || g.chips());
+    g.setCache(null);
+    renderThreadTags();
+  } catch {
+    renderThreadTags();
+  }
+}
+
+async function removeConvTag(group, convId, tag) {
+  const g = TAG_GROUPS[group];
+  try {
+    const data = await g.remove(convId, tag);
+    if (state.activeId !== convId) return;
+    g.setChips(data.tags || g.chips().filter((t) => t !== tag));
+    renderThreadTags();
+  } catch {
+    /* leave the chip as-is if the write failed */
+  }
+}
+
+// A change to one conversation's models can add or clear its warning icons, so
+// the sidebar row and the Unverified count are refreshed alongside the strip.
+async function applyModelState(convId, data) {
+  if (state.activeId !== convId) return;
+  state.models = data;
+  renderModelStrip();
+  refreshConvWarningIcons(convId, data);
+  await refreshModelWarnings();
+}
+
+function refreshConvWarningIcons(convId, data) {
+  const titleEl = findConvItemEl(convId)?.querySelector(".conv-title");
+  if (!titleEl) return;
+  setRowWarningIcons(
+    titleEl,
+    data.warn_range || data.warn_coverage ? data : null,
+  );
+}
+
+// Editing availability dates can flip the warning state of conversations that
+// are already on screen. Their icons were baked into the rendered rows, so the
+// whole visible list has to be swept, not just the aggregate count.
+const UNVERIFIED_SWEEP_LIMIT = 500;
+
+async function refreshModelWarnings() {
+  if (!isClaudeSide()) return;
+  let data;
+  try {
+    data = await apiRequest(
+      `/api/conversations?view=unverified&limit=${UNVERIFIED_SWEEP_LIMIT}`,
+      { action: "Refresh model warnings" },
+    );
+  } catch {
+    return; // leave the last known state in place
+  }
+  state.unverifiedCount = data.unverified_count || 0;
+  syncUnverifiedOption();
+
+  const flagged = data.conversations || [];
+  // The Unverified view lists exactly the flagged conversations, so a change
+  // adds or removes rows rather than just icons — and more flagged rows than
+  // one sweep page means the list itself is the only reliable source.
+  if (state.view === "unverified" || (data.total || 0) > flagged.length) {
+    loadConversations(false);
+    return;
+  }
+  const byId = new Map(flagged.map((c) => [c.id, c]));
+  for (const el of convList.querySelectorAll(".conv-item")) {
+    const titleEl = el.querySelector(".conv-title");
+    if (!titleEl) continue;
+    setRowWarningIcons(titleEl, byId.get(el.dataset.id));
+  }
+}
+
+function setRowWarningIcons(titleEl, conv) {
+  titleEl.querySelectorAll(".warn-icon").forEach((el) => el.remove());
+  if (conv) titleEl.insertAdjacentHTML("afterbegin", warningIconsHtml(conv));
+}
+
+async function addConvModel(convId, modelId) {
+  try {
+    const data = await apiModelState("/api/conversation-models", {
+      method: "POST",
+      body: { conv_id: convId, model_id: modelId },
+      action: "Tag conversation model",
+    });
+    await applyModelState(convId, data);
+  } catch {
+    /* leave the strip as-is if the write failed */
+  }
+}
+
+async function removeConvModel(convId, modelId) {
+  try {
+    const data = await apiModelState(
+      `/api/conversation-models/${encodeURIComponent(convId)}/${encodeURIComponent(modelId)}`,
+      { method: "DELETE", action: "Remove conversation model" },
+    );
+    await applyModelState(convId, data);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function dismissWarning(convId, kind) {
+  try {
+    const data = await apiModelState("/api/conversation-models/dismiss", {
+      method: "POST",
+      body: { conv_id: convId, kind },
+      action: "Dismiss model warning",
+    });
+    await applyModelState(convId, data);
+  } catch {
+    /* ignore */
+  }
+}
+
+// ── The two warning dialogs ──────────────────────────────────────────────────
+
+const verifyModelModal = $("verify-model-modal");
+const coverageModal = $("coverage-modal");
+let _warnDialogConvId = null;
+
+function openVerifyModelDialog(convId) {
+  _warnDialogConvId = convId;
+  verifyModelModal.hidden = false;
+}
+
+function openCoverageDialog(convId) {
+  _warnDialogConvId = convId;
+  coverageModal.hidden = false;
+}
+
+// "No" / "Okay" just close; the warnings stay.
+$("verify-model-no")?.addEventListener("click", () => {
+  verifyModelModal.hidden = true;
+});
+$("coverage-okay")?.addEventListener("click", () => {
+  coverageModal.hidden = true;
+});
+$("verify-model-yes")?.addEventListener("click", () => {
+  verifyModelModal.hidden = true;
+  if (_warnDialogConvId) dismissWarning(_warnDialogConvId, "range");
+});
+$("coverage-dismiss")?.addEventListener("click", () => {
+  coverageModal.hidden = true;
+  if (_warnDialogConvId) dismissWarning(_warnDialogConvId, "coverage");
+});
+for (const modal of [verifyModelModal, coverageModal]) {
+  modal?.addEventListener("mousedown", (e) => {
+    if (e.target === modal) modal.hidden = true;
+  });
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!verifyModelModal.hidden) verifyModelModal.hidden = true;
+  if (!coverageModal.hidden) coverageModal.hidden = true;
+});
+
+// ── Settings screen ──────────────────────────────────────────────────────────
+
+const DEFAULT_COMPARE_COLORS = {
+  chatgpt: themeValue("--compare-chatgpt-default"),
+  claude: themeValue("--compare-claude-default"),
+};
+
+// Push the current compare colours into CSS custom properties. All compare-tab
+// colouring is driven by these two variables, so future settings can extend the
+// same pattern.
+function applyCompareColors() {
+  const root = document.documentElement.style;
+  for (const provider of ["chatgpt", "claude"]) {
+    const name = `--compare-${provider}`;
+    // Defaults stay CSS-driven; an explicit preference overrides the theme.
+    if (state.compareColors[provider].toLowerCase() === themeValue(`${name}-default`).toLowerCase()) {
+      root.removeProperty(name);
+    } else {
+      root.setProperty(name, state.compareColors[provider]);
+    }
+  }
+}
+
+function _validHexColor(v) {
+  return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);
+}
+
+async function openSettings() {
+  if (typeof summaryHasUnsavedChanges === "function" && summaryHasUnsavedChanges()) {
+    const r = await openSummaryUnsavedModal();
+    if (r === "cancel") return;
+    if (r === "save") await saveAllUnsaved();
+  }
+  if (typeof closeSummaryPanel === "function") closeSummaryPanel();
+  if (!(await leaveNotesForSpecialView())) return;
+  rememberReturnTab();
+  state.activeSpecialView = "settings";
+  state.activeTabId = null;
+  document
+    .querySelectorAll(".conv-item.active")
+    .forEach((el) => el.classList.remove("active"));
+  state.activeId = null;
+  await ensureSpecialTab("settings", "Settings");
+  hideAllPanels();
+  settingsPanel.hidden = false;
+  const gpt = $("compare-color-chatgpt");
+  const claude = $("compare-color-claude");
+  if (gpt) gpt.value = state.compareColors.chatgpt;
+  if (claude) claude.value = state.compareColors.claude;
+  const condensedToggle = $("setting-condensed-summary");
+  if (condensedToggle) condensedToggle.checked = state.preferences.includeCondensedSummary;
+  const hintsToggle = $("setting-summary-hints");
+  if (hintsToggle) hintsToggle.checked = state.preferences.showSummaryHints;
+  const authorToggle = $("setting-summary-author");
+  if (authorToggle) authorToggle.checked = state.preferences.showSummaryAuthor;
+  const autoNotesToggle = $("setting-auto-notes-panel");
+  if (autoNotesToggle) autoNotesToggle.checked = state.preferences.autoOpenNotesPanel;
+  const headerLabelsToggle = $("setting-header-labels");
+  if (headerLabelsToggle) {
+    headerLabelsToggle.checked = state.preferences.showHeaderLabels;
+  }
+  const chatSnippetToggle = $("setting-chat-snippet");
+  if (chatSnippetToggle) {
+    chatSnippetToggle.checked = state.preferences.showChatSnippet;
+  }
+  applySidebarWidth(state.preferences.sidebarWidth);
+}
+
+// ── About screen ─────────────────────────────────────────────────────────────
+
+async function openAbout() {
+  if (typeof summaryHasUnsavedChanges === "function" && summaryHasUnsavedChanges()) {
+    const r = await openSummaryUnsavedModal();
+    if (r === "cancel") return;
+    if (r === "save") await saveAllUnsaved();
+  }
+  if (typeof closeSummaryPanel === "function") closeSummaryPanel();
+  if (!(await leaveNotesForSpecialView())) return;
+  rememberReturnTab();
+  state.activeSpecialView = "about";
+  state.activeTabId = null;
+  document
+    .querySelectorAll(".conv-item.active")
+    .forEach((el) => el.classList.remove("active"));
+  state.activeId = null;
+  await ensureSpecialTab("about", "About");
+  hideAllPanels();
+  aboutPanel.hidden = false;
+  loadUpdateStatus();
+}
+
+// About page: check for, install, and undo updates (updater.py, AUDIT.md #16).
+// Checking only shows what would change; nothing is installed until the
+// user presses the install button.
+const checkUpdateBtn = $("check-update-btn");
+const updateStatus = $("update-status");
+const applyUpdateBtn = $("apply-update-btn");
+const restoreUpdateBtn = $("restore-update-btn");
+const restoreConfirmBtn = $("restore-update-confirm-btn");
+const restoreCancelBtn = $("restore-update-cancel-btn");
+let pendingUpdateVersion = "";
+let updateRequestPending = false; // the page's auto-reload waits for it
+let pendingUpdateCommit = "";
+let keptBackup = null;
+
+const UPDATE_HEADERS = { "X-CHV-Update": "1" };
+
+function setUpdateStatus(text, kind) {
+  updateStatus.textContent = text;
+  updateStatus.className = `update-status update-status-${kind}`;
+}
+
+function showUpdateChecking(text) {
+  updateStatus.className = "update-status update-status-checking";
+  updateStatus.replaceChildren();
+  const spinner = document.createElement("span");
+  spinner.className = "update-spinner";
+  spinner.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.textContent = text;
+  updateStatus.append(spinner, label);
+}
+
+function updateFailureText(e, fallback) {
+  return e && e.userMessage ? e.userMessage : fallback;
+}
+
+function plural(n, one, many) {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+function renderUpdateBackup(backup) {
+  keptBackup = backup || null;
+  const section = $("update-backup");
+  if (!section) return;
+  section.hidden = !keptBackup;
+  restoreConfirmBtn.hidden = true;
+  restoreCancelBtn.hidden = true;
+  restoreUpdateBtn.hidden = false;
+  if (!keptBackup) return;
+  const from = keptBackup.from_version || "the earlier version";
+  const when = keptBackup.created_at
+    ? new Date(keptBackup.created_at * 1000).toLocaleString()
+    : "";
+  $("update-backup-text").textContent =
+    `The files from version ${from} were kept when the app was updated` +
+    (keptBackup.to_version ? ` to version ${keptBackup.to_version}` : "") +
+    (when ? ` on ${when}` : "") +
+    `. They are in the "${keptBackup.folder}" folder inside the app folder. ` +
+    "Going back puts them back. It does not undo changes to your chats or " +
+    "labels; copies of the databases are in the \"backups\" folder. If the " +
+    "app will not start, run: python updater.py --restore";
+  restoreUpdateBtn.textContent = `Go back to version ${from}`;
+  restoreConfirmBtn.textContent = `Yes, go back to version ${from}`;
+}
+
+function renderUpdateDetails(data) {
+  const section = $("update-details");
+  pendingUpdateVersion = data.latest_version;
+  pendingUpdateCommit = data.commit;
+  $("update-details-title").textContent =
+    `Version ${data.latest_version} is available (you have ${data.current_version})`;
+  const parts = [];
+  if (data.files_changed) parts.push(`${plural(data.files_changed, "file", "files")} will be replaced`);
+  if (data.files_added) parts.push(`${plural(data.files_added, "new file", "new files")} will be added`);
+  $("update-details-summary").textContent =
+    (parts.length ? parts.join(" and ") + ". " : "") +
+    "The current files are kept so you can go back. Your chats, labels and " +
+    "other data are not changed.";
+
+  const edits = data.local_edits || [];
+  const editsUnknown = data.local_edits_known === false;
+  const editsBox = $("update-local-edits");
+  const list = $("update-local-edits-list");
+  editsBox.hidden = !edits.length && !editsUnknown;
+  list.replaceChildren(
+    ...edits.map((path) => {
+      const li = document.createElement("li");
+      li.textContent = path;
+      return li;
+    }),
+  );
+  list.hidden = !edits.length;
+  if (editsUnknown) {
+    $("update-local-edits-text").textContent =
+      `Version ${data.current_version} has no release on GitHub to compare ` +
+      "with, so files changed on this computer can't be listed. If you " +
+      "changed any app files, the update will replace them; your copies are " +
+      "kept with the old files.";
+  } else if (edits.length) {
+    $("update-local-edits-text").textContent =
+      "These files were changed on this computer. The update will replace " +
+      "them; your copies are kept with the old files:";
+  }
+
+  const changes = $("update-changes");
+  changes.replaceChildren();
+  const entries = data.changes || [];
+  if (!entries.length) {
+    const none = document.createElement("p");
+    none.className = "update-change-text";
+    none.textContent = "This release has no list of changes.";
+    changes.append(none);
+  }
+  for (const entry of entries) {
+    const title = document.createElement("h3");
+    title.className = "update-change-title";
+    title.textContent = entry.title || entry.version;
+    const text = document.createElement("p");
+    text.className = "update-change-text";
+    text.textContent = entry.text || "";
+    changes.append(title, text);
+  }
+  applyUpdateBtn.textContent = `Install version ${data.latest_version}`;
+  applyUpdateBtn.disabled = false;
+  section.hidden = false;
+}
+
+async function loadUpdateStatus() {
+  try {
+    const data = await apiRequest("/api/update/status", {
+      action: "Load the app version",
+    });
+    $("about-version").textContent = `This is version ${data.current_version}.`;
+    renderUpdateBackup(data.backup);
+  } catch (_) {
+    $("about-version").textContent = "";
+  }
+}
+
+checkUpdateBtn?.addEventListener("click", async () => {
+  checkUpdateBtn.disabled = true;
+  $("update-details").hidden = true;
+  showUpdateChecking("Checking for updates.");
+  try {
+    const data = await apiRequest("/api/update/check", {
+      method: "POST",
+      headers: UPDATE_HEADERS,
+      body: {},
+      action: "Check for updates",
+      notify: false,
+    });
+    renderUpdateBackup(data.backup);
+    if (data.status === "available") {
+      setUpdateStatus("An update is available. Read what changes below.", "success");
+      renderUpdateDetails(data);
+    } else {
+      setUpdateStatus(`You have the newest version (${data.current_version}).`, "success");
+    }
+  } catch (e) {
+    setUpdateStatus(
+      updateFailureText(e, "The check could not finish. Please try again."),
+      "error",
+    );
+  } finally {
+    checkUpdateBtn.disabled = false;
+  }
+});
+
+applyUpdateBtn?.addEventListener("click", async () => {
+  if (!pendingUpdateVersion) return;
+  applyUpdateBtn.disabled = true;
+  checkUpdateBtn.disabled = true;
+  showUpdateChecking(`Installing version ${pendingUpdateVersion}.`);
+  updateRequestPending = true;
+  try {
+    const data = await apiRequest("/api/update/apply", {
+      method: "POST",
+      headers: UPDATE_HEADERS,
+      body: { version: pendingUpdateVersion, commit: pendingUpdateCommit },
+      action: "Install an update",
+      notify: false,
+    });
+    const message =
+      `Updated to version ${data.version}. The app reloads by itself; ` +
+      "if it does not, close it and start it again.";
+    $("update-details").hidden = true;
+    $("about-version").textContent = `This is version ${data.version}.`;
+    setUpdateStatus(message, "success");
+    renderUpdateBackup(data.backup);
+    try {
+      sessionStorage.setItem("chv-update-result", message);
+    } catch (_) {}
+  } catch (e) {
+    setUpdateStatus(
+      updateFailureText(e, "The update could not be installed. Nothing was changed."),
+      "error",
+    );
+    applyUpdateBtn.disabled = false;
+    // A failed install can leave a different backup (the way back from a
+    // half-finished update), so show what is kept now.
+    loadUpdateStatus();
+  } finally {
+    updateRequestPending = false;
+    checkUpdateBtn.disabled = false;
+  }
+});
+
+restoreUpdateBtn?.addEventListener("click", () => {
+  restoreUpdateBtn.hidden = true;
+  restoreConfirmBtn.hidden = false;
+  restoreCancelBtn.hidden = false;
+  restoreConfirmBtn.focus();
+});
+
+restoreCancelBtn?.addEventListener("click", () => {
+  renderUpdateBackup(keptBackup);
+  restoreUpdateBtn.focus();
+});
+
+restoreConfirmBtn?.addEventListener("click", async () => {
+  restoreConfirmBtn.disabled = true;
+  restoreCancelBtn.disabled = true;
+  showUpdateChecking("Putting the old files back.");
+  updateRequestPending = true;
+  try {
+    const data = await apiRequest("/api/update/restore", {
+      method: "POST",
+      headers: UPDATE_HEADERS,
+      body: {},
+      action: "Undo the last update",
+      notify: false,
+    });
+    const message =
+      `Went back to version ${data.version}. The app reloads by itself; ` +
+      "if it does not, close it and start it again.";
+    setUpdateStatus(message, "success");
+    $("update-details").hidden = true;
+    $("about-version").textContent = `This is version ${data.version}.`;
+    renderUpdateBackup(null);
+    try {
+      sessionStorage.setItem("chv-update-result", message);
+    } catch (_) {}
+  } catch (e) {
+    setUpdateStatus(
+      updateFailureText(e, "The old files could not be put back."),
+      "error",
+    );
+    renderUpdateBackup(keptBackup);
+    loadUpdateStatus();
+  } finally {
+    updateRequestPending = false;
+    restoreConfirmBtn.disabled = false;
+    restoreCancelBtn.disabled = false;
+  }
+});
+
+function saveCompareColors() {
+  applyCompareColors();
+  renderTabs();
+  saveUiPreferences({ compareColors: { ...state.compareColors } });
+}
+
+$("compare-color-chatgpt")?.addEventListener("input", (e) => {
+  if (_validHexColor(e.target.value)) {
+    state.compareColors.chatgpt = e.target.value;
+    saveCompareColors();
+  }
+});
+$("compare-color-claude")?.addEventListener("input", (e) => {
+  if (_validHexColor(e.target.value)) {
+    state.compareColors.claude = e.target.value;
+    saveCompareColors();
+  }
+});
+$("compare-color-reset")?.addEventListener("click", () => {
+  state.compareColors = { ...DEFAULT_COMPARE_COLORS };
+  const gpt = $("compare-color-chatgpt");
+  const claude = $("compare-color-claude");
+  if (gpt) gpt.value = state.compareColors.chatgpt;
+  if (claude) claude.value = state.compareColors.claude;
+  saveCompareColors();
+});
+
+$("setting-condensed-summary")?.addEventListener("change", (e) => {
+  saveUiPreferences({ includeCondensedSummary: e.target.checked });
+  if (typeof updateSummaryCondensedVisibility === "function") {
+    updateSummaryCondensedVisibility();
+  }
+});
+$("setting-summary-hints")?.addEventListener("change", (e) => {
+  saveUiPreferences({ showSummaryHints: e.target.checked });
+  loadConversations(false);
+  renderFolders();
+});
+$("setting-summary-author")?.addEventListener("change", (e) => {
+  saveUiPreferences({ showSummaryAuthor: e.target.checked });
+  if (typeof updateSummaryAuthorLabels === "function") {
+    updateSummaryAuthorLabels();
+  }
+});
+$("setting-auto-notes-panel")?.addEventListener("change", (e) => {
+  saveUiPreferences({ autoOpenNotesPanel: e.target.checked });
+});
+$("setting-chat-snippet")?.addEventListener("change", (e) => {
+  saveUiPreferences({ showChatSnippet: e.target.checked });
+  loadConversations(false);
+  refreshPinnedList();
+  renderFolders();
+});
+$("setting-header-labels")?.addEventListener("change", (e) => {
+  saveUiPreferences({ showHeaderLabels: e.target.checked });
+  renderHeaderLabel(state.activeId, state.activeLabels);
+});
+
+// ── Label indicators + assignment (runtime) ──────────────────────────────────
+// The compact square shown before each conversation title. Rendering and every
+// interaction here are gated on the feature being enabled; when it is off no
+// square, menu entry, or label view appears, and the stored data is untouched.
+
+function labelsFeatureOn() {
+  return !!state.preferences.labelsEnabled;
+}
+
+// Labels in their user-configured cycle order. The server already returns them
+// ordered by sort_index, but sort defensively so cycling never depends on it.
+function orderedLabels() {
+  return [...state.labelRows].sort(
+    (a, b) => (a.sort_index || 0) - (b.sort_index || 0),
+  );
+}
+
+function labelById(id) {
+  return state.labelRows.find((l) => l.id === id) || null;
+}
+
+// Load the label definitions once (and after any change) so squares and cycling
+// work without opening the Labels screen. Shared with refreshLabelList's data.
+async function loadLabelDefs() {
+  try {
+    const data = await apiModelState("/api/labels");
+    state.labelRows = data.labels || [];
+  } catch {
+    state.labelRows = [];
+  }
+  return state.labelRows;
+}
+
+// Whether a label's name is actually drawn. Only in "Square + Label" mode, and
+// only when the label has a name — an unnamed label is always a bare square.
+function labelShowsText(label) {
+  return (
+    state.preferences.labelDisplay === "square_label" &&
+    !!(label && String(label.name || "").trim())
+  );
+}
+
+// Where a conversation's squares go in the sidebar row:
+//   false → inline, immediately before the title (one bare square only),
+//   true  → their own row under the date/messages line.
+// A single unnamed square stays by the title; more than one square, or any
+// square that shows a name, moves below.
+function labelsGoBelowTitle(labels) {
+  const list = labels || [];
+  return list.length > 1 || list.some(labelShowsText);
+}
+
+// One chip: the square, plus the label's name when that mode shows names. The
+// same chip is used in every placement, so they can never drift apart.
+function labelChipEl(convId, label, allLabels) {
+  const chip = document.createElement("span");
+  chip.className = "label-chip";
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "label-square" + (label ? "" : " label-square-blank");
+  if (label) {
+    setLabelColor(btn, label.color);
+    const nm = String(label.name || "").trim();
+    if (nm) btn.title = nm;
+    btn.setAttribute(
+      "aria-label",
+      `Label: ${nm || "unnamed"}. Activate to change. Right-click for the full list.`,
+    );
+  } else {
+    btn.title = "No label";
+    btn.setAttribute("aria-label", "No label. Activate to set one.");
+  }
+  // Primary click cycles this square; it must never also open the conversation.
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    cycleConvLabel(convId, label, allLabels);
+  });
+  // A right-click offers direct multi-select without repeated cycling.
+  btn.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openSetLabelPopover(convId, allLabels || [], btn, label ? label.id : null);
+  });
+  chip.appendChild(btn);
+
+  if (labelShowsText(label)) {
+    const txt = document.createElement("span");
+    txt.className = "label-text";
+    txt.textContent = String(label.name).trim();
+    chip.appendChild(txt);
+  }
+  return chip;
+}
+
+// The group of chips for one conversation. With no labels it is a single blank
+// square (the "add a label" affordance).
+function labelIndicatorEl(convId, labels) {
+  const list = labels || [];
+  const wrap = document.createElement("span");
+  wrap.className = "label-indicator";
+  if (!list.length) {
+    wrap.appendChild(labelChipEl(convId, null, list));
+  } else {
+    for (const l of list) wrap.appendChild(labelChipEl(convId, l, list));
+  }
+  return wrap;
+}
+
+// Draw a sidebar row's labels in the right place, clearing whichever placement
+// it used before. `titleSel` names the row's title element; `afterEl` is the
+// element the below-the-line row is inserted after (the date/messages footer).
+function paintRowLabels(rowEl, convId, labels, titleSel, afterEl) {
+  if (!rowEl) return;
+  const list = labels || [];
+  const titleEl = rowEl.querySelector(titleSel);
+  // Clear both placements first — a row can move between them at any time.
+  rowEl.querySelectorAll(":scope > .conv-label-row").forEach((n) => n.remove());
+  titleEl?.querySelectorAll(":scope > .label-indicator").forEach((n) => n.remove());
+  if (!labelsFeatureOn()) return;
+
+  if (labelsGoBelowTitle(list)) {
+    const row = document.createElement("div");
+    row.className = "conv-label-row";
+    // Named chips are capped at three per line; bare squares wrap freely.
+    if (list.some(labelShowsText)) row.classList.add("label-row-named");
+    for (const l of list) row.appendChild(labelChipEl(convId, l, list));
+    const anchor = afterEl && afterEl.parentElement === rowEl ? afterEl : null;
+    if (anchor) anchor.after(row);
+    else rowEl.appendChild(row);
+  } else if (titleEl) {
+    titleEl.insertBefore(labelIndicatorEl(convId, list), titleEl.firstChild);
+  }
+}
+
+// Cycle one square: blank → first unused label → next unused → … → off.
+// Labels the conversation already carries are skipped so cycling can never
+// produce the same label twice.
+async function cycleConvLabel(convId, currentLabel, allLabels) {
+  const order = orderedLabels();
+  if (!order.length) return; // no labels configured — nothing to cycle to
+  const held = new Set((allLabels || []).map((l) => l.id));
+  const from = currentLabel
+    ? order.findIndex((l) => l.id === currentLabel.id)
+    : -1;
+  let next = null;
+  for (let i = from + 1; i < order.length; i++) {
+    if (!held.has(order[i].id)) {
+      next = order[i];
+      break;
+    }
+  }
+  if (!currentLabel) {
+    // A blank square adds a label; with none left to add there is nothing to do.
+    if (next) await setConvLabels(convId, { label_id: next.id, action: "add" });
+    return;
+  }
+  if (next) {
+    // Swap this square's label for the next one, leaving the others alone.
+    const ids = (allLabels || []).map((l) => (l.id === currentLabel.id ? next.id : l.id));
+    await setConvLabels(convId, { label_ids: ids });
+  } else {
+    // Past the end of the list: this square turns off.
+    await setConvLabels(convId, { label_id: currentLabel.id, action: "remove" });
+  }
+}
+
+// Send one label change and reflect the conversation's new full label list.
+async function setConvLabels(convId, change) {
+  try {
+    const data = await apiModelState("/api/conversation-labels", {
+      method: "POST",
+      body: { conv_id: convId, ...change },
+      action: "Set conversation label",
+    });
+    applyConvLabelResult(convId, data.labels || []);
+  } catch (_) {
+    /* leave the current squares as-is on failure */
+  }
+}
+
+// Reflect a just-applied change into the UI without a full reload where
+// possible.
+function applyConvLabelResult(convId, labels) {
+  // In a label view the row may now belong (or no longer belong) to the filter,
+  // so reload the filtered list rather than leaving a stale row behind.
+  if (String(state.view).startsWith("label:")) {
+    loadConversations(false);
+  } else {
+    refreshRowLabel(convId, labels);
+  }
+  // A foldered conversation's only sidebar row is in the folder tree.
+  refreshFolderRowLabel(convId, labels);
+  if (convId === state.activeId) {
+    state.activeLabels = labels || [];
+    renderHeaderLabel(convId, state.activeLabels);
+  }
+  // Keep the Labels screen's usage counts fresh if it happens to be open.
+  if (state.activeSpecialView === "labels") {
+    loadLabelDefs().then(() => {
+      renderLabelList();
+    });
+  }
+}
+
+// Redraw one main-list row's labels in place.
+function refreshRowLabel(convId, labels) {
+  const item = findConvItemEl(convId);
+  if (!item) return;
+  paintRowLabels(
+    item,
+    convId,
+    labels,
+    ".conv-title",
+    item.querySelector(":scope > .conv-footer"),
+  );
+}
+
+// Update a conversation's squares in the folder tree in place, and keep
+// state.folders in step so a later renderFolders() shows the same labels.
+function refreshFolderRowLabel(convId, labels) {
+  for (const f of state.folders || []) {
+    for (const c of f.conversations || []) {
+      if (c.id === convId) c.labels = labels || [];
+    }
+  }
+  const item = foldersTree?.querySelector(
+    `.folder-conv-item[data-id="${CSS.escape(convId)}"]`,
+  );
+  if (!item) return;
+  paintRowLabels(item, convId, labels, ".folder-conv-title", null);
+}
+
+// The squares shown next to the open conversation's title in the header.
+function renderHeaderLabel(convId, labels, target) {
+  const holder = target || $("thread-title-square");
+  if (!holder) return;
+  holder.innerHTML = "";
+  if (!labelsFeatureOn() || !convId) return;
+  if (!state.preferences.showHeaderLabels) return;
+  holder.appendChild(labelIndicatorEl(convId, labels || []));
+}
+
+// Re-read the open conversation's actual label assignments from the server and
+// update the header. Needed after an operation that can change them other than
+// through its own squares — a bulk apply or a snapshot restore — where the
+// assignments themselves may have changed, not just the label definitions.
+// (onLabelDefsChanged's definition-based update is right for a rename/recolour/
+// delete, but it can't see an assignment change.)
+async function refreshActiveHeaderLabel() {
+  if (!state.activeId) return;
+  if (!labelsFeatureOn()) {
+    renderHeaderLabel(null, []);
+    return;
+  }
+  try {
+    const d = await apiModelState(
+      `/api/conversation-labels/${encodeURIComponent(state.activeId)}`,
+    );
+    state.activeLabels = d.labels || [];
+  } catch (_) {
+    /* leave the current header as-is on failure */
+  }
+  renderHeaderLabel(state.activeId, state.activeLabels);
+}
+
+// ── Direct label selection (⋮ menus + right-click popover) ────────────────────
+
+// Build the right-click list: Blank (clears every label) plus one toggle per
+// configured label. A conversation can carry several, so these toggle rather
+// than replace. Every option shows its
+// colour AND its name whatever the display mode is set to — this list is how
+// you pick, so it always spells the labels out. The square you right-clicked is
+// left out: it is already the active one.
+// itemClass matches the menu's own button class so styling stays consistent.
+function appendSetLabelToMenu(menu, convId, currentLabels, itemClass, onSelect, activeId) {
+  const cap = document.createElement("div");
+  cap.className = "menu-section-caption";
+  cap.textContent = "Set labels";
+  menu.appendChild(cap);
+
+  const options = [
+    { id: null, name: "Blank", color: null },
+    ...orderedLabels().filter((l) => l.id !== activeId),
+  ];
+  for (const opt of options) {
+    const b = document.createElement("button");
+    b.className = `${itemClass} set-label-item`;
+    b.setAttribute("role", "menuitem");
+
+    if (opt.id) {
+      b.appendChild(labelPickSwatch(opt));
+      b.setAttribute("aria-label", labelAccessibleName(opt));
+    } else {
+      const dot = document.createElement("span");
+      dot.className = "menu-label-dot menu-label-dot-blank";
+      const name = document.createElement("span");
+      name.className = "sidebar-menu-item-label";
+      name.textContent = "Blank";
+      b.append(dot, name);
+    }
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (onSelect) onSelect();
+      if (opt.id) setConvLabels(convId, { label_id: opt.id, action: "toggle" });
+      else setConvLabels(convId, { label_ids: [] });
+    });
+    menu.appendChild(b);
+  }
+}
+
+// Put a fixed-position menu just below its anchor, or above it when there is
+// no room below, keeping it inside the window.
+function placeMenuNear(menu, anchorEl) {
+  const inset = themePixels("--popover-safe-inset");
+  const gap = themePixels("--popover-gap");
+  const r = anchorEl.getBoundingClientRect();
+  const mw = menu.offsetWidth;
+  let left = r.left;
+  if (left + mw > window.innerWidth - inset) left = window.innerWidth - mw - inset;
+  if (left < inset) left = inset;
+  let top = r.bottom + gap;
+  if (top + menu.offsetHeight > window.innerHeight - inset) {
+    top = r.top - menu.offsetHeight - gap;
+  }
+  menu.style.left = `${left}px`;
+  menu.style.top = `${Math.max(inset, top)}px`;
+}
+
+// ── Label pick lists ──────────────────────────────────────────────────────────
+// A label in a pick list: a named label is its colour square and name; an
+// unnamed one is a wider bar of its colour, which identifies it on its own.
+function labelPickSwatch(label) {
+  const frag = document.createDocumentFragment();
+  const name = String(label?.name || "").trim();
+  const mark = document.createElement("span");
+  mark.className = name ? "menu-label-dot" : "menu-label-bar";
+  setLabelColor(mark, label?.color);
+  frag.appendChild(mark);
+  if (name) {
+    const text = document.createElement("span");
+    text.className = "sidebar-menu-item-label";
+    text.textContent = name;
+    frag.appendChild(text);
+  }
+  return frag;
+}
+
+// Screen readers can't see the colour, so they get a spoken name instead.
+function labelAccessibleName(label) {
+  return String(label?.name || "").trim() || "Unnamed label";
+}
+
+// A dropdown list of choices that can show label colours. Browser <select>
+// menus show only text, and macOS and phones ignore option colours, so label
+// choices use this instead. Each item is { value, label } (a label object) or
+// { value, text }. onPick(value) runs when one is chosen; onClose runs when the
+// list closes without a choice.
+let _labelMenu = null;
+function closeLabelMenu(picked = false) {
+  if (!_labelMenu) return;
+  const { menu, onClose, outside, keys, scroll } = _labelMenu;
+  _labelMenu = null;
+  restoreActionMenuFocus(menu);
+  menu.remove();
+  document.removeEventListener("mousedown", outside, true);
+  window.removeEventListener("keydown", keys, true);
+  window.removeEventListener("scroll", scroll, true);
+  if (!picked && onClose) onClose();
+}
+function openLabelMenu(anchorEl, items, onPick, { onClose } = {}) {
+  closeLabelMenu();
+  const menu = document.createElement("div");
+  menu.className = "sidebar-menu label-choice-menu";
+  menu.setAttribute("role", "menu");
+  for (const item of items) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "sidebar-menu-item set-label-item";
+    b.setAttribute("role", "menuitem");
+    if (item.label) {
+      b.appendChild(labelPickSwatch(item.label));
+      b.setAttribute("aria-label", labelAccessibleName(item.label));
+    } else {
+      const text = document.createElement("span");
+      text.className = "sidebar-menu-item-label";
+      text.textContent = item.text;
+      b.appendChild(text);
+    }
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeLabelMenu(true);
+      onPick(item.value);
+    });
+    menu.appendChild(b);
+  }
+  $("workspace-controls").appendChild(menu);
+  placeMenuNear(menu, anchorEl);
+  const outside = (e) => {
+    if (!menu.contains(e.target) && !anchorEl.contains(e.target)) closeLabelMenu();
+  };
+  // Window capture runs before any page-level Escape handling, so Escape
+  // closes only this list.
+  const keys = (e) => {
+    const buttons = [...menu.querySelectorAll("button")];
+    const at = buttons.indexOf(document.activeElement);
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      closeLabelMenu();
+      anchorEl.focus?.();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      buttons[(at + step + buttons.length) % buttons.length]?.focus();
+    }
+  };
+  const scroll = (e) => {
+    if (!menu.contains(e.target)) closeLabelMenu();
+  };
+  _labelMenu = { menu, onClose, outside, keys, scroll };
+  prepareActionMenu(menu, anchorEl, closeLabelMenu);
+  document.addEventListener("mousedown", outside, true);
+  window.addEventListener("keydown", keys, true);
+  window.addEventListener("scroll", scroll, true);
+  menu.querySelector("button")?.focus();
+}
+
+let _setLabelPopover = null;
+function closeSetLabelPopover() {
+  if (_setLabelPopover) {
+    restoreActionMenuFocus(_setLabelPopover);
+    _setLabelPopover.remove();
+    _setLabelPopover = null;
+    document.removeEventListener("mousedown", _onSetLabelOutside, true);
+    window.removeEventListener("scroll", closeSetLabelPopover, true);
+  }
+}
+function _onSetLabelOutside(e) {
+  if (_setLabelPopover && !_setLabelPopover.contains(e.target)) {
+    closeSetLabelPopover();
+  }
+}
+// A small standalone menu anchored to a square, for right-click direct-select.
+// `activeId` is the label of the square that was right-clicked, which the list
+// leaves out.
+function openSetLabelPopover(convId, currentLabels, anchorEl, activeId) {
+  closeSetLabelPopover();
+  if (!labelsFeatureOn()) return;
+  const menu = document.createElement("div");
+  menu.className = "sidebar-menu conv-item-menu label-picker-menu";
+  menu.setAttribute("role", "menu");
+  appendSetLabelToMenu(
+    menu,
+    convId,
+    currentLabels,
+    "sidebar-menu-item",
+    () => closeSetLabelPopover(),
+    activeId,
+  );
+  $("workspace-controls").appendChild(menu);
+  _setLabelPopover = menu;
+  placeMenuNear(menu, anchorEl);
+  prepareActionMenu(menu, anchorEl, closeSetLabelPopover);
+  document.addEventListener("mousedown", _onSetLabelOutside, true);
+  window.addEventListener("scroll", closeSetLabelPopover, true);
+}
+
+// ── Label filter views in the existing view/filter control ────────────────────
+
+function labelViewTitle(view) {
+  if (!view || !String(view).startsWith("label:")) return null;
+  const sel = String(view).slice("label:".length);
+  if (sel === "__unlabeled__") return "Unlabeled";
+  const l = labelById(sel);
+  return l ? labelPickName(l) : "Label";
+}
+
+// Rebuild the label options in the filter dropdown to match the current
+// definitions and enabled state. Provider selection is unaffected — the server
+// applies the provider filter alongside the label filter.
+function syncLabelFilterOptions() {
+  if (!viewFilterEl) return;
+  viewFilterEl
+    .querySelectorAll("option.label-view-option")
+    .forEach((o) => o.remove());
+  if (!labelsFeatureOn()) {
+    if (String(state.view).startsWith("label:")) {
+      state.view = "recent";
+      viewFilterEl.value = "recent";
+      updateListSectionTitle();
+    }
+    return;
+  }
+  const mk = (val, text) => {
+    const o = document.createElement("option");
+    o.value = val;
+    o.textContent = text;
+    o.className = "label-view-option";
+    return o;
+  };
+  const frag = document.createDocumentFragment();
+  frag.appendChild(mk("label:__unlabeled__", "Unlabeled"));
+  for (const l of orderedLabels())
+    frag.appendChild(mk("label:" + l.id, labelPickName(l)));
+  viewFilterEl.appendChild(frag);
+  // Keep the current selection valid; if its label was deleted, fall back.
+  if (String(state.view).startsWith("label:")) {
+    viewFilterEl.value = state.view;
+    if (viewFilterEl.value !== state.view) {
+      state.view = "recent";
+      viewFilterEl.value = "recent";
+    }
+    updateListSectionTitle();
+  }
+}
+
+// Called after label definitions change (add/rename/recolour/reorder/delete):
+// refresh the filter options and any visible squares.
+function onLabelDefsChanged() {
+  syncLabelFilterOptions();
+  // Keep the bulk tool's label/target dropdowns in step while it's on screen.
+  if (state.activeSpecialView === "labels") refreshBulkLabelSelects();
+  if (labelsFeatureOn()) {
+    loadConversations(false);
+    // Folder-tree rows carry squares too; re-fetch so their colours/names and
+    // any cleared-by-deletion labels update.
+    loadFolders();
+    if (state.activeId) {
+      // The open conversation's label objects may have been recoloured or
+      // renamed, or cleared (their definition deleted); re-read them from the
+      // label defs.
+      state.activeLabels = (state.activeLabels || [])
+        .map((l) => labelById(l.id))
+        .filter(Boolean)
+        .map((l) => ({ id: l.id, name: l.name, color: l.color }));
+      renderHeaderLabel(state.activeId, state.activeLabels);
+    }
+  } else {
+    // Feature just turned off → drop squares from the folder tree too.
+    loadFolders();
+  }
+}
+
+// ── Import New Chats screen ──────────────────────────────────────────────────
+// Scans the source folder for backup files not yet imported, identifies each as
+// a Claude or ChatGPT export, merges it in, and renames the source file. Below
+// the import area is the history of every backup already brought in.
+
+const importNewBtn = $("import-new-btn");
+const importNewStatus = $("import-new-status");
+const importNewSummary = $("import-new-summary");
+const importHistoryBody = $("import-history-body");
+const importHistoryTable = $("import-history-table");
+const importDeletedModeEl = $("import-deleted-mode");
+const importReviewNewWrap = $("import-review-new-wrap");
+const importReviewNewEl = $("import-review-new");
+const importReviewArea = $("import-review-area");
+const importReviewBody = $("import-review-body");
+const importReviewAllBtn = $("import-review-all");
+const importReviewNoneBtn = $("import-review-none");
+const importReviewSelectedBtn = $("import-review-selected");
+
+// The "has new messages" checkbox only applies to the skip choice.
+function syncImportDeletedSetting() {
+  if (importReviewNewWrap) {
+    importReviewNewWrap.hidden = state.importNew.deletedMode !== "skip";
+  }
+}
+
+async function openImportNew() {
+  if (typeof summaryHasUnsavedChanges === "function" && summaryHasUnsavedChanges()) {
+    const r = await openSummaryUnsavedModal();
+    if (r === "cancel") return;
+    if (r === "save") await saveAllUnsaved();
+  }
+  if (typeof closeSummaryPanel === "function") closeSummaryPanel();
+  if (!(await leaveNotesForSpecialView())) return;
+  rememberReturnTab();
+  state.activeSpecialView = "import_new";
+  state.activeTabId = null;
+  document
+    .querySelectorAll(".conv-item.active")
+    .forEach((el) => el.classList.remove("active"));
+  state.activeId = null;
+  await ensureSpecialTab("import_new", "Import New Chats");
+  hideAllPanels();
+  importNewPanel.hidden = false;
+  if (importDeletedModeEl) importDeletedModeEl.value = state.importNew.deletedMode;
+  if (importReviewNewEl) importReviewNewEl.checked = state.importNew.reviewNewMessages;
+  syncImportDeletedSetting();
+  await loadImportHistory();
+  await loadReviewArea();
+  try {
+    const data = await apiRequest("/api/jobs", { action: "Check background job", log: false });
+    if (data.job) await followImportJob(data.job);
+  } catch (_) {} // apiRequest displays a plain message; reopening reconnects.
+}
+
+// The review area lists previously deleted conversations held aside from an
+// import for the user to decide on. It is persisted server-side, so it survives
+// reopening the Import screen until every row is imported or dismissed.
+async function loadReviewArea() {
+  let review = [];
+  try {
+    const data = await apiRequest("/api/import-new/review", {
+      action: "Load import review list",
+    });
+    review = data.review || [];
+  } catch (_) {
+    review = [];
+  }
+  state.importNew.review = review;
+  // Drop any checked ids that are no longer present.
+  const present = new Set(review.map((r) => r.conversation_id));
+  for (const id of Array.from(state.importNew.reviewChecked)) {
+    if (!present.has(id)) state.importNew.reviewChecked.delete(id);
+  }
+  renderReviewArea();
+}
+
+function renderReviewArea() {
+  if (!importReviewArea) return;
+  const review = state.importNew.review || [];
+  if (!review.length) {
+    importReviewArea.hidden = true;
+    importReviewBody.innerHTML = "";
+    return;
+  }
+  importReviewArea.hidden = false;
+  importReviewBody.innerHTML = "";
+  for (const r of review) {
+    const tr = document.createElement("tr");
+    const checked = state.importNew.reviewChecked.has(r.conversation_id);
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "import-review-select";
+    cb.checked = checked; // checkboxes start unchecked (nothing is pre-checked)
+    cb.addEventListener("change", () => {
+      if (cb.checked) state.importNew.reviewChecked.add(r.conversation_id);
+      else state.importNew.reviewChecked.delete(r.conversation_id);
+    });
+    const tdCheck = document.createElement("td");
+    tdCheck.className = "import-review-check";
+    tdCheck.appendChild(cb);
+    tr.appendChild(tdCheck);
+    const cells = [
+      r.chat_name || "Untitled",
+      fmtImportDate(r.first_message),
+      fmtImportDate(r.last_message),
+      (r.total_messages || 0).toLocaleString(),
+    ];
+    cells.forEach((val, i) => {
+      const td = document.createElement("td");
+      if (i === 3) td.className = "import-cell-num";
+      td.textContent = val;
+      tr.appendChild(td);
+    });
+    importReviewBody.appendChild(tr);
+  }
+}
+
+async function apiReviewImport(body) {
+  return startImportJob("/api/import-new/review-import", body, "Resolve import review");
+}
+
+async function loadImportHistory() {
+  importHistoryBody.innerHTML =
+    '<tr><td colspan="5" class="import-history-empty">Loading…</td></tr>';
+  try {
+    const data = await apiRequest("/api/imported-backups", {
+      action: "Load import history",
+      notify: false,
+    });
+    state.importNew.backups = data.backups || [];
+  } catch (e) {
+    importHistoryBody.innerHTML = `<tr><td colspan="5" class="import-history-empty">${escHtml(
+      e.userMessage || API_MESSAGES.load,
+    )}</td></tr>`;
+    return;
+  }
+  renderImportHistory();
+}
+
+// A short absolute date for the table cells (the relative formatDate used in the
+// sidebar is not what you want when scanning a list of backups).
+function fmtImportDate(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  if (isNaN(d)) return "—";
+  return d.toLocaleDateString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function renderImportHistory() {
+  const { provider, sortKey, sortDir } = state.importNew;
+  let rows = state.importNew.backups.slice();
+  if (provider === "claude" || provider === "chatgpt") {
+    rows = rows.filter((r) => r.provider === provider);
+  }
+
+  const numeric = sortKey !== "file_name";
+  rows.sort((a, b) => {
+    let av = a[sortKey];
+    let bv = b[sortKey];
+    let cmp;
+    if (numeric) {
+      cmp = (Number(av) || 0) - (Number(bv) || 0);
+    } else {
+      cmp = String(av || "").localeCompare(String(bv || ""), undefined, {
+        sensitivity: "base",
+        numeric: true,
+      });
+    }
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  // Reflect the active sort in the header cells.
+  importHistoryTable.querySelectorAll("th[data-sort]").forEach((th) => {
+    th.classList.remove("sort-asc", "sort-desc");
+    if (th.dataset.sort === sortKey) {
+      th.classList.add(sortDir === "asc" ? "sort-asc" : "sort-desc");
+    }
+  });
+
+  if (!rows.length) {
+    importHistoryBody.innerHTML =
+      '<tr><td colspan="5" class="import-history-empty">No backups imported yet.</td></tr>';
+    return;
+  }
+
+  importHistoryBody.innerHTML = "";
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    const label = r.provider === "chatgpt" ? "ChatGPT" : "Claude";
+    tr.innerHTML = `
+      <td class="import-cell-name">
+        <span class="import-provider-tag import-provider-${escHtml(
+          r.provider,
+        )}">${escHtml(label)}</span>
+        <span class="import-file-name">${escHtml(r.file_name || "")}</span>
+      </td>
+      <td>${escHtml(fmtImportDate(r.first_chat))}</td>
+      <td>${escHtml(fmtImportDate(r.last_chat))}</td>
+      <td class="import-cell-num">${(r.total_chats || 0).toLocaleString()}</td>
+      <td>${escHtml(fmtImportDate(r.imported_at))}</td>`;
+    importHistoryBody.appendChild(tr);
+  }
+}
+
+// Column-heading sort: first click sorts by that column, clicking the same
+// column again reverses direction.
+importHistoryTable?.querySelectorAll("th[data-sort]").forEach((th) => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.sort;
+    const s = state.importNew;
+    if (s.sortKey === key) {
+      s.sortDir = s.sortDir === "asc" ? "desc" : "asc";
+    } else {
+      s.sortKey = key;
+      // Text defaults to A→Z; dates/numbers default to newest/largest first.
+      s.sortDir = key === "file_name" ? "asc" : "desc";
+    }
+    renderImportHistory();
+  });
+});
+
+document
+  .querySelectorAll('input[name="import-provider-filter"]')
+  .forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (radio.checked) {
+        state.importNew.provider = radio.value;
+        renderImportHistory();
+      }
+    });
+  });
+
+const importCancelBtn = $("import-cancel-btn");
+const importRebuildBtn = $("import-rebuild-btn");
+const importJobSpinner = $("import-job-spinner");
+let importJobId = null;
+let importJobWatch = null;
+
+function setImportBusy(busy) {
+  state.importNew.busy = busy;
+  for (const button of [importNewBtn, importRebuildBtn, importReviewAllBtn,
+                        importReviewNoneBtn, importReviewSelectedBtn]) {
+    if (button) button.disabled = busy;
+  }
+  importCancelBtn.hidden = !busy || !importJobId;
+  importCancelBtn.disabled = false;
+  importJobSpinner.hidden = !busy;
+}
+
+async function refreshAfterImportJob() {
+  await loadImportHistory();
+  await loadReviewArea();
+  try { await loadConversations(false); } catch (_) {}
+}
+
+async function followImportJob(initial) {
+  if (importJobWatch?.id === initial.id) return importJobWatch.promise;
+  // One poller per page, also when the user leaves and reopens this screen.
+  const watch = { id: initial.id };
+  importJobWatch = watch;
+  watch.promise = (async () => {
+    let job = initial;
+    importJobId = job.id;
+    setImportBusy(job.status === "running");
+    try {
+      while (true) {
+        const count = job.total == null
+          ? (job.progress ? ` ${job.progress.toLocaleString()} checked.` : "")
+          : ` ${job.progress.toLocaleString()} of ${job.total.toLocaleString()}.`;
+        importNewStatus.textContent = job.message + (job.status === "running" ? count : "");
+        if (job.status !== "running") break;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const data = await apiRequest(`/api/jobs/${encodeURIComponent(job.id)}`, {
+          action: "Check background job", log: false,
+        });
+        job = data.job;
+      }
+      if (job.status === "completed") {
+        if (job.kind === "import") renderImportSummary(job.result || {});
+        else if (job.kind === "review-import") {
+          importNewStatus.textContent = `Finished. ${job.result.imported} chats brought back; ${job.result.dismissed} dismissed.`;
+          if (job.result.errors) importNewStatus.textContent += ` ${job.result.errors} could not be brought back and remain in the review list. See the Error Log.`;
+        } else importNewStatus.textContent = "Rebuild finished.";
+      }
+      await refreshAfterImportJob();
+      return job;
+    } finally {
+      if (importJobWatch === watch) {
+        importJobId = null;
+        importJobWatch = null;
+        setImportBusy(false);
+      }
+    }
+  })();
+  return watch.promise;
+}
+
+async function startImportJob(url, body, action) {
+  if (state.importNew.busy) return;
+  setImportBusy(true);
+  importNewSummary.hidden = true;
+  importNewStatus.textContent = "Starting…";
+  try {
+    const data = await apiRequest(url, { method: "POST", body, action, notify: false });
+    return await followImportJob(data.job);
+  } catch (e) {
+    importNewStatus.textContent = e.userMessage || "The job status could not be checked. Reopen this screen to reconnect.";
+  } finally {
+    if (!importJobWatch) setImportBusy(false);
+  }
+}
+
+async function runImportNew() {
+  return startImportJob("/api/import-new", {
+    deleted_mode: state.importNew.deletedMode,
+    review_new_messages: state.importNew.reviewNewMessages,
+  }, "Import new chats");
+}
+
+importCancelBtn?.addEventListener("click", async () => {
+  if (!importJobId) return;
+  importCancelBtn.disabled = true;
+  try {
+    await apiRequest(`/api/jobs/${encodeURIComponent(importJobId)}/cancel`, {
+      method: "POST", body: {}, action: "Cancel background job",
+    });
+    importNewStatus.textContent = "Cancelling after the current chat. Chats already saved will be kept.";
+  } catch (_) { importCancelBtn.disabled = false; }
+});
+
+importRebuildBtn?.addEventListener("click", async () => {
+  if (state.importNew.busy) return;
+  const ok = await openConfirm({
+    title: "Rebuild from exports?",
+    text: "This rebuilds the chat history from the files in source. Your notes, titles, labels and other saved choices are kept. A database copy is made first. If cancelled, the history will be incomplete until you rebuild again.",
+    okLabel: "Rebuild",
+  });
+  if (ok) await startImportJob("/api/rebuild", {}, "Rebuild chat history");
+});
+
+function renderImportSummary(data) {
+  if (data.error) {
+    importNewSummary.hidden = false;
+    importNewSummary.innerHTML = `<div class="import-summary-error">${escHtml(
+      data.error,
+    )}</div>`;
+    return;
+  }
+  const stats = [
+    { label: "Added", n: data.added || 0 },
+    { label: "Updated", n: data.updated || 0 },
+    { label: "Unchanged", n: data.unchanged || 0 },
+    { label: "Skipped", n: data.skipped || 0 },
+    { label: "Errors", n: data.errors || 0, err: (data.errors || 0) > 0 },
+  ];
+  if (data.review) {
+    stats.push({ label: "To review", n: data.review });
+  }
+  const nFiles = (data.files || []).length;
+  const totalConvs = stats.reduce((a, s) => a + s.n, 0);
+
+  let html = '<div class="import-summary-head">';
+  if (nFiles === 0 && !(data.notes || []).length) {
+    html += "No new backup files found in the source folder.";
+  } else if (nFiles === 0) {
+    html += "No new conversations were imported.";
+  } else {
+    html += `Imported ${nFiles} backup file${
+      nFiles !== 1 ? "s" : ""
+    } (${totalConvs.toLocaleString()} conversation${
+      totalConvs !== 1 ? "s" : ""
+    } processed).`;
+  }
+  html += "</div>";
+
+  html += '<div class="import-summary-stats">';
+  for (const s of stats) {
+    html += `<div class="import-stat${
+      s.err ? " import-stat-error" : ""
+    }"><span class="import-stat-n">${s.n.toLocaleString()}</span><span class="import-stat-label">${escHtml(
+      s.label,
+    )}</span></div>`;
+  }
+  html += "</div>";
+
+  if ((data.notes || []).length) {
+    html += '<ul class="import-summary-notes">';
+    for (const note of data.notes) {
+      html += `<li>${escHtml(note)}</li>`;
+    }
+    html += "</ul>";
+  }
+
+  importNewSummary.hidden = false;
+  importNewSummary.innerHTML = html;
+}
+
+importNewBtn?.addEventListener("click", runImportNew);
+
+importDeletedModeEl?.addEventListener("change", () => {
+  state.importNew.deletedMode = importDeletedModeEl.value || "skip";
+  syncImportDeletedSetting();
+});
+importReviewNewEl?.addEventListener("change", () => {
+  state.importNew.reviewNewMessages = importReviewNewEl.checked;
+});
+
+// Import All / None / Selected for the review area.
+async function resolveReview({ importAll = false, dismissAll = false } = {}) {
+  const body = {};
+  if (importAll) {
+    body.import_all = true;
+  } else if (dismissAll) {
+    body.dismiss_all = true;
+  } else {
+    const review = state.importNew.review || [];
+    const byId = new Map(review.map((r) => [r.conversation_id, r]));
+    body.import_ids = Array.from(state.importNew.reviewChecked)
+      .filter((id) => byId.has(id))
+      .map((id) => ({ id, provider: byId.get(id).provider }));
+    if (!body.import_ids.length) {
+      return; // nothing checked — no-op
+    }
+  }
+  const job = await apiReviewImport(body);
+  if (job?.status === "completed") state.importNew.reviewChecked.clear();
+}
+
+importReviewAllBtn?.addEventListener("click", () =>
+  resolveReview({ importAll: true }),
+);
+importReviewNoneBtn?.addEventListener("click", () =>
+  resolveReview({ dismissAll: true }),
+);
+importReviewSelectedBtn?.addEventListener("click", () => resolveReview({}));
+
+// ── Add Claude Models screen ─────────────────────────────────────────────────
+
+async function openClaudeModels() {
+  if (!(await leaveNotesForSpecialView())) return;
+  rememberReturnTab();
+  state.activeSpecialView = "claude_models";
+  state.activeTabId = null;
+  document
+    .querySelectorAll(".conv-item.active")
+    .forEach((el) => el.classList.remove("active"));
+  state.activeId = null;
+  await ensureSpecialTab("claude_models", "Add Claude Models");
+  hideAllPanels();
+  claudeModelsPanel.hidden = false;
+  await refreshModelTable();
+}
+
+async function refreshModelTable() {
+  try {
+    const data = await apiModelState("/api/claude-models");
+    state.modelRows = data.models || [];
+  } catch {
+    modelTableBody.innerHTML =
+      '<tr><td colspan="4" class="no-results">Could not load the model list.</td></tr>';
+    return;
+  }
+  renderModelTable();
+}
+
+// Every cell is editable in place. The name belongs to the model rather than to
+// one row, so a model with two availability windows shows its name on both and
+// editing either renames the model.
+function renderModelTable() {
+  modelTableBody.innerHTML = "";
+  if (!state.modelRows.length) {
+    modelTableBody.innerHTML =
+      '<tr><td colspan="4" class="no-results">No models yet. Add one above.</td></tr>';
+    return;
+  }
+  let previousModel = null;
+  for (const row of state.modelRows) {
+    const tr = document.createElement("tr");
+    // A model's extra availability windows are tied visually to the first one.
+    if (row.model_id === previousModel) tr.classList.add("model-row-continued");
+    previousModel = row.model_id;
+
+    tr.appendChild(modelCell(row, "name", "text", row.name));
+    tr.appendChild(modelCell(row, "start_date", "date", row.start_date));
+    tr.appendChild(modelCell(row, "end_date", "date", row.end_date || ""));
+
+    const actions = document.createElement("td");
+    actions.className = "model-cell-actions";
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "model-row-delete";
+    del.title = `Delete ${row.name} (${row.start_date})`;
+    del.setAttribute("aria-label", `Delete ${row.name}`);
+    del.textContent = "✕";
+    del.addEventListener("click", () => deleteModelRow(row));
+    actions.appendChild(del);
+    tr.appendChild(actions);
+    modelTableBody.appendChild(tr);
+  }
+}
+
+function modelCell(row, field, type, value) {
+  const td = document.createElement("td");
+  const input = document.createElement("input");
+  input.type = type;
+  input.value = value;
+  input.className = "model-cell-input";
+  const fieldName = { name: "Model name", start_date: "Available from", end_date: "Available until" }[field] || field;
+  input.setAttribute("aria-label", `${fieldName}: ${row.name || "Unnamed model"}, ${row.start_date || "no start date"}`);
+  if (type === "text") input.spellcheck = false;
+  const commit = () => {
+    const next = input.value.trim();
+    if (next === String(value || "")) return;
+    saveModelRow(row, field, next, input, value);
+  };
+  input.addEventListener("blur", commit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") input.blur();
+    else if (e.key === "Escape") {
+      input.value = value || "";
+      input.blur();
+    }
+  });
+  td.appendChild(input);
+  return td;
+}
+
+async function saveModelRow(row, field, next, input, previous) {
+  showModelError("");
+  try {
+    const data = await apiModelState(
+      `/api/claude-models/${encodeURIComponent(row.period_id)}`,
+      { method: "PATCH", body: { [field]: next }, action: "Change model dates", notify: false },
+    );
+    state.modelRows = data.models || [];
+    renderModelTable();
+  } catch (e) {
+    input.value = previous || ""; // rejected: put the old value back
+    showModelError(e.message);
+  }
+  // Changed dates can move conversations in or out of range.
+  await refreshModelWarnings();
+}
+
+async function deleteModelRow(row) {
+  showModelError("");
+  try {
+    const data = await apiModelState(
+      `/api/claude-models/${encodeURIComponent(row.period_id)}`,
+      { method: "DELETE", action: "Remove model", notify: false },
+    );
+    state.modelRows = data.models || [];
+    renderModelTable();
+  } catch (e) {
+    showModelError(e.message);
+  }
+  await refreshModelWarnings();
+}
+
+function showModelError(msg) {
+  if (!modelAddError) return;
+  modelAddError.textContent = msg || "";
+  modelAddError.hidden = !msg;
+}
+
+modelAddForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  showModelError("");
+  const body = {
+    name: $("model-add-name").value.trim(),
+    start_date: $("model-add-start").value,
+    end_date: $("model-add-end").value,
+  };
+  try {
+    const data = await apiModelState("/api/claude-models", {
+      method: "POST",
+      body,
+      action: "Add model",
+      notify: false,
+    });
+    state.modelRows = data.models || [];
+    renderModelTable();
+    modelAddForm.reset();
+    $("model-add-name").focus();
+  } catch (err) {
+    showModelError(err.message);
+    return;
+  }
+  await refreshModelWarnings();
+});
+
+// Re-reads claude_models.json and applies any corrections (e.g. dates that
+// were missing on an earlier import) to the models it names, without
+// touching models the user added by hand.
+modelReloadBtn?.addEventListener("click", async () => {
+  showModelError("");
+  modelReloadBtn.disabled = true;
+  const originalLabel = modelReloadBtn.textContent;
+  modelReloadBtn.textContent = "Reloading…";
+  try {
+    const data = await apiModelState("/api/claude-models/reload", {
+      method: "POST",
+      action: "Reload model data",
+      notify: false,
+    });
+    state.modelRows = data.models || [];
+    renderModelTable();
+  } catch (e) {
+    showModelError(e.message);
+  } finally {
+    modelReloadBtn.disabled = false;
+    modelReloadBtn.textContent = originalLabel;
+  }
+  await refreshModelWarnings();
+});
+
+// ── Collapsible thread header ────────────────────────────────────────────────
+// The header (title, date/messages, Move to, ⋮) folds away behind the chevron
+// in the thin bar above it, the way a window rolls up into its title bar.
+// Collapsed, that bar also carries the chat's name so the pane still says what
+// you are looking at. The choice is remembered per browser.
+
+function setThreadTitle(text) {
+  threadTitle.textContent = text;
+  threadTitlebarLabel.textContent = text;
+  const summaryToggleBtn = $("summary-toggle-btn");
+  if (summaryToggleBtn) summaryToggleBtn.hidden = !text;
+  const notesToggleBtn = $("notes-toggle-btn");
+  const notesSideToggleBtn = $("notes-side-toggle-btn");
+  if (notesToggleBtn) notesToggleBtn.hidden = !text;
+  if (notesSideToggleBtn) notesSideToggleBtn.hidden = !text;
+  const relatedToggleBtn = $("related-toggle-btn");
+  if (relatedToggleBtn) relatedToggleBtn.hidden = !text;
+  const convLinkBtn = $("conv-link-btn");
+  if (convLinkBtn) convLinkBtn.hidden = !text;
+  updateSummaryToggleIcon(false);
+  if (typeof updateNotesScreenIcon === "function") updateNotesScreenIcon(false);
+  if (typeof updateNotesSideIcon === "function") {
+    updateNotesSideIcon(typeof notesSidePanelIsOpen === "function" && notesSidePanelIsOpen());
+  }
+}
+
+function threadHeaderCollapsed() {
+  return _lsGet("threadHeaderCollapsed", "0") === "1";
+}
+
+function applyThreadHeaderCollapsed() {
+  const collapsed = threadHeaderCollapsed();
+  threadHeader.hidden = collapsed;
+  // Only worth naming the chat up here when the heading below is hidden.
+  threadTitlebarLabel.hidden = !collapsed;
+  thread.classList.toggle("header-collapsed", collapsed);
+  threadCollapseBtn.setAttribute("aria-expanded", String(!collapsed));
+  threadCollapseBtn.title = collapsed ? "Expand header" : "Collapse header";
+  threadCollapseBtn.setAttribute(
+    "aria-label",
+    collapsed ? "Expand header" : "Collapse header",
+  );
+}
+
+threadCollapseBtn?.addEventListener("click", () => {
+  _lsSet("threadHeaderCollapsed", threadHeaderCollapsed() ? "0" : "1");
+  applyThreadHeaderCollapsed();
+});
+
+// ── Sidebar popup menu ("More" button) ─────────────────────────────────────────
+// The "More" button opens a small menu anchored to it instead of jumping
+// straight to a screen. Add future entries as .sidebar-menu-item buttons in
+// index.html with a unique data-action, then handle that action below.
+
+const sidebarMenuBtn = $("sidebar-menu-btn");
+const sidebarMenu = $("sidebar-menu");
+
+function positionSidebarMenu() {
+  const inset = themePixels("--popover-safe-inset");
+  const gap = themePixels("--popover-menu-gap");
+  const r = sidebarMenuBtn.getBoundingClientRect();
+  // Show the menu first so its size can be measured, then place it above the
+  // button, right-aligned to it (the button sits at the bottom of the sidebar).
+  sidebarMenu.hidden = false;
+  const mw = sidebarMenu.offsetWidth;
+  const mh = sidebarMenu.offsetHeight;
+  let left = r.right - mw;
+  if (left < inset) left = inset;
+  let top = r.top - mh - gap;
+  if (top < inset) top = r.bottom + gap; // fall back to below if no room above
+  sidebarMenu.style.left = `${left}px`;
+  sidebarMenu.style.top = `${top}px`;
+}
+
+function openSidebarMenu() {
+  positionSidebarMenu();
+  prepareActionMenu(sidebarMenu, sidebarMenuBtn, closeSidebarMenu);
+  sidebarMenuBtn.setAttribute("aria-expanded", "true");
+  document.addEventListener("mousedown", onSidebarMenuOutside, true);
+  document.addEventListener("keydown", onSidebarMenuKey, true);
+}
+
+function closeSidebarMenu() {
+  restoreActionMenuFocus(sidebarMenu);
+  sidebarMenu.hidden = true;
+  sidebarMenuBtn.setAttribute("aria-expanded", "false");
+  document.removeEventListener("mousedown", onSidebarMenuOutside, true);
+  document.removeEventListener("keydown", onSidebarMenuKey, true);
+}
+
+function onSidebarMenuOutside(e) {
+  if (!sidebarMenu.contains(e.target) && e.target !== sidebarMenuBtn) {
+    closeSidebarMenu();
+  }
+}
+
+function onSidebarMenuKey(e) {
+  if (e.key === "Escape") closeSidebarMenu();
+}
+
+sidebarMenuBtn.addEventListener("click", () => {
+  if (sidebarMenu.hidden) openSidebarMenu();
+  else closeSidebarMenu();
+});
+
+sidebarMenu.querySelectorAll(".sidebar-menu-item").forEach((item) => {
+  item.addEventListener("click", () => {
+    const action = item.dataset.action;
+    closeSidebarMenu();
+    if (action === "gizmos") openGizmos();
+    else if (action === "attachment-report") openAttReport(false);
+    else if (action === "import-audit") openImportAudit(false);
+    else if (action === "error-log") openErrorLog();
+    else if (action === "import-new") openImportNew();
+    else if (action === "settings") openSettings();
+    else if (action === "about") openAbout();
+    else if (action === "claude-models") openClaudeModels();
+    else if (action === "labels") openLabels();
+  });
+});
+
+// ── Memories ──────────────────────────────────────────────────────────────────
+
+async function openMemories(fromButton = false) {
+  if (typeof summaryHasUnsavedChanges === "function" && summaryHasUnsavedChanges()) {
+    const r = await openSummaryUnsavedModal();
+    if (r === "cancel") return;
+    if (r === "save") await saveAllUnsaved();
+  }
+  if (typeof closeSummaryPanel === "function") closeSummaryPanel();
+  if (!(await leaveNotesForSpecialView())) return;
+  if (fromButton && state.activeSpecialView === "memories") {
+    await returnFromSpecialView();
+    return;
+  }
+  rememberReturnTab();
+  state.activeSpecialView = "memories";
+  state.activeTabId = null;
+  document
+    .querySelectorAll(".conv-item.active")
+    .forEach((el) => el.classList.remove("active"));
+  state.activeId = null;
+  await ensureSpecialTab("memories", "Memories");
+
+  hideAllPanels();
+  memoriesPanel.hidden = false;
+
+  if (memoriesContent.dataset.loaded) return;
+
+  memoriesContent.innerHTML = '<div class="loading">Loading…</div>';
+  let data;
+  try {
+    data = await apiRequest("/api/memories", { action: "Open Memories" });
+  } catch (_) {
+    memoriesContent.innerHTML = "";
+    return;
+  }
+  memoriesContent.innerHTML = "";
+
+  if (!data.memories?.length) {
+    memoriesContent.innerHTML =
+      '<div class="no-results">No memories found.</div>';
+    return;
+  }
+
+  memoriesMeta.textContent = `${data.memories.length} memory record${data.memories.length !== 1 ? "s" : ""}`;
+
+  for (const mem of data.memories) {
+    const div = document.createElement("div");
+    div.className = "memory-block";
+    const bodyEl = document.createElement("div");
+    bodyEl.className = "message-body";
+    bodyEl.innerHTML = md(mem.content);
+    div.appendChild(bodyEl);
+    memoriesContent.appendChild(div);
+  }
+
+  memoriesContent.dataset.loaded = "1";
+}
+
+$("memories-btn")?.addEventListener("click", () => openMemories(true));
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+
+async function openProjects(fromButton = false) {
+  if (typeof summaryHasUnsavedChanges === "function" && summaryHasUnsavedChanges()) {
+    const r = await openSummaryUnsavedModal();
+    if (r === "cancel") return;
+    if (r === "save") await saveAllUnsaved();
+  }
+  if (typeof closeSummaryPanel === "function") closeSummaryPanel();
+  if (!(await leaveNotesForSpecialView())) return;
+  if (fromButton && state.activeSpecialView === "projects") {
+    await returnFromSpecialView();
+    return;
+  }
+  rememberReturnTab();
+  state.activeSpecialView = "projects";
+  state.activeTabId = null;
+  document
+    .querySelectorAll(".conv-item.active")
+    .forEach((el) => el.classList.remove("active"));
+  state.activeId = null;
+  await ensureSpecialTab("projects", "Projects");
+
+  hideAllPanels();
+  projectsPanel.hidden = false;
+
+  if (projectsContent.dataset.loaded) return;
+
+  projectsContent.innerHTML = '<div class="loading">Loading…</div>';
+  let data;
+  try {
+    data = await apiRequest("/api/projects", { action: "Open Projects" });
+  } catch (_) {
+    projectsContent.innerHTML = "";
+    return;
+  }
+  projectsContent.innerHTML = "";
+
+  if (!data.projects?.length) {
+    projectsContent.innerHTML =
+      '<div class="no-results">No projects found.</div>';
+    return;
+  }
+
+  projectsMeta.textContent = `${data.projects.length} project${data.projects.length !== 1 ? "s" : ""}`;
+
+  for (const proj of data.projects) {
+    const card = document.createElement("div");
+    card.className = "project-card";
+    card.innerHTML = `
+      <div class="project-header">
+        <div class="project-name">${escHtml(proj.name)}</div>
+        ${proj.description ? `<div class="project-desc">${escHtml(proj.description)}</div>` : ""}
+        <div class="project-meta">${proj.doc_count} document${proj.doc_count !== 1 ? "s" : ""}</div>
+      </div>
+      <div class="project-docs" data-proj-id="${escHtml(proj.id)}"></div>`;
+    projectsContent.appendChild(card);
+
+    // Load this project's docs immediately
+    const docsEl = card.querySelector(".project-docs");
+    docsEl.innerHTML =
+      '<div class="loading project-docs-loading">Loading docs…</div>';
+    apiRequest(`/api/project/${encodeURIComponent(proj.id)}`, {
+      action: "Load project documents",
+    })
+      .catch(() => ({ docs: [] }))
+      .then((d) => {
+        docsEl.innerHTML = "";
+        if (!d.docs?.length) {
+          docsEl.innerHTML =
+            '<div class="no-results project-docs-empty">No documents.</div>';
+          return;
+        }
+        for (const doc of d.docs) {
+          const docDiv = document.createElement("div");
+          docDiv.className = "project-doc";
+          const bodyEl = document.createElement("div");
+          bodyEl.className = "message-body";
+          bodyEl.innerHTML = md(doc.content);
+          docDiv.innerHTML = `<div class="project-doc-name">📄 ${escHtml(doc.filename)}</div>`;
+          docDiv.appendChild(bodyEl);
+          docsEl.appendChild(docDiv);
+        }
+      });
+  }
+
+  projectsContent.dataset.loaded = "1";
+}
+
+$("projects-btn")?.addEventListener("click", () => openProjects(true));
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+// ── Naming modal (create folder, rename chat, rename folder) ────────────────────
+const nameModal = $("name-modal");
+const nameModalTitle = $("name-modal-title");
+const nameModalInput = $("name-modal-input");
+const nameModalCancel = $("name-modal-cancel");
+const nameModalOk = $("name-modal-ok");
+let _nameModalResolve = null;
+
+function openNameModal({ title = "Rename", value = "", okLabel = "Okay" } = {}) {
+  nameModalTitle.textContent = title;
+  nameModalInput.value = value;
+  nameModalOk.textContent = okLabel;
+  nameModal.hidden = false;
+  setTimeout(() => {
+    nameModalInput.focus();
+    nameModalInput.select();
+  }, 0);
+  return new Promise((resolve) => {
+    _nameModalResolve = resolve;
+  });
+}
+function closeNameModal(result) {
+  nameModal.hidden = true;
+  const r = _nameModalResolve;
+  _nameModalResolve = null;
+  if (r) r(result);
+}
+nameModalCancel?.addEventListener("click", () => closeNameModal(null));
+nameModalOk?.addEventListener("click", () =>
+  closeNameModal(nameModalInput.value.trim() || null),
+);
+nameModalInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    closeNameModal(nameModalInput.value.trim() || null);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeNameModal(null);
+  }
+});
+nameModal?.addEventListener("mousedown", (e) => {
+  if (e.target === nameModal) closeNameModal(null);
+});
+
+// ── Folder picker (Add to Folder) ───────────────────────────────────────────────
+const folderPickModal = $("folder-pick-modal");
+const folderPickSelect = $("folder-pick-select");
+const folderPickCancel = $("folder-pick-cancel");
+const folderPickOk = $("folder-pick-ok");
+let _folderPickResolve = null;
+
+// Resolves to the chosen folder id, or null on Cancel.
+function openFolderPicker(folders, selectedId = null) {
+  folderPickSelect.innerHTML = "";
+  for (const f of folders) {
+    const opt = document.createElement("option");
+    opt.value = f.id;
+    opt.textContent = f.name;
+    folderPickSelect.appendChild(opt);
+  }
+  if (selectedId && folders.some((f) => f.id === selectedId)) {
+    folderPickSelect.value = selectedId;
+  }
+  folderPickOk.disabled = !folders.length;
+  folderPickModal.hidden = false;
+  setTimeout(() => folderPickSelect.focus(), 0);
+  return new Promise((resolve) => {
+    _folderPickResolve = resolve;
+  });
+}
+function closeFolderPicker(result) {
+  folderPickModal.hidden = true;
+  const r = _folderPickResolve;
+  _folderPickResolve = null;
+  if (r) r(result);
+}
+folderPickCancel?.addEventListener("click", () => closeFolderPicker(null));
+folderPickOk?.addEventListener("click", () =>
+  closeFolderPicker(folderPickSelect.value || null),
+);
+folderPickModal?.addEventListener("mousedown", (e) => {
+  if (e.target === folderPickModal) closeFolderPicker(null);
+});
+folderPickModal?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target === folderPickSelect) {
+    e.preventDefault();
+    closeFolderPicker(folderPickSelect.value || null);
+  }
+});
+
+// ── Confirmation modal (permanent deletion) ─────────────────────────────────────
+const confirmModal = $("confirm-modal");
+const confirmModalTitle = $("confirm-modal-title");
+const confirmModalText = $("confirm-modal-text");
+const confirmModalCancel = $("confirm-modal-cancel");
+const confirmModalOk = $("confirm-modal-ok");
+let _confirmResolve = null;
+
+function openConfirm({
+  title = "Are you sure?",
+  text = "",
+  okLabel = "Delete",
+} = {}) {
+  confirmModalTitle.textContent = title;
+  confirmModalText.textContent = text;
+  confirmModalOk.textContent = okLabel;
+  confirmModal.hidden = false;
+  setTimeout(() => confirmModalCancel.focus(), 0);
+  return new Promise((resolve) => {
+    _confirmResolve = resolve;
+  });
+}
+function closeConfirm(result) {
+  confirmModal.hidden = true;
+  const r = _confirmResolve;
+  _confirmResolve = null;
+  if (r) r(result);
+}
+confirmModalCancel?.addEventListener("click", () => closeConfirm(false));
+confirmModalOk?.addEventListener("click", () => closeConfirm(true));
+confirmModal?.addEventListener("mousedown", (e) => {
+  if (e.target === confirmModal) closeConfirm(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (!confirmModal.hidden && e.key === "Escape") {
+    e.preventDefault();
+    closeConfirm(false);
+  }
+});
+
+// ── Folders ─────────────────────────────────────────────────────────────────
+async function apiFolders() {
+  const p = new URLSearchParams({ provider: state.providerSide });
+  return apiRequest(`/api/folders?${p}`, { action: "Load folders" });
+}
+async function apiCreateFolder(name, provider) {
+  return apiRequest("/api/folders", {
+    method: "POST",
+    // Folders belong to a side. Default to the sidebar's, but callers acting on
+    // a specific conversation (e.g. a Compare item from the other provider)
+    // pass that conversation's provider instead.
+    body: {
+      name,
+      provider: provider || state.providerSide,
+    },
+    action: "Create folder",
+  });
+}
+
+// Shared "New folder" dialog flow, used by the sidebar's Add New Folder
+// button, its right-click context menu, and the Move-to menu's own entry.
+// Returns the created folder (with its id) or null if the user cancelled.
+async function promptCreateFolder(provider) {
+  const name = await openNameModal({ title: "New folder", value: "" });
+  if (!name) return null;
+  const res = await apiCreateFolder(name, provider);
+  return res && res.id ? res : null;
+}
+
+// Create a folder from the sidebar (not tied to any conversation): expand it
+// so the user sees it landed, then refresh the tree.
+async function createFolderFromSidebar() {
+  const res = await promptCreateFolder();
+  if (!res) return;
+  _expandedFolders.add(res.id);
+  _lsSet("expandedFolders", JSON.stringify([..._expandedFolders]));
+  // Right-clicking a collapsed Folders section still creates the folder;
+  // open the section too so the new folder is actually visible afterward.
+  _lsSet("foldersOpen", "1");
+  await loadFolders();
+}
+async function apiRenameFolder(id, name) {
+  return apiRequest(`/api/folders/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: { name },
+    action: "Rename folder",
+  });
+}
+async function apiMoveToFolder(folderId, conversationId) {
+  return apiRequest("/api/folder-items", {
+    method: "POST",
+    body: { folder_id: folderId, conversation_id: conversationId },
+    action: "Move to folder",
+  });
+}
+async function apiRemoveFromFolder(conversationId) {
+  return apiRequest(`/api/folder-items/${encodeURIComponent(conversationId)}`, {
+    method: "DELETE",
+    action: "Remove from folder",
+  });
+}
+async function apiFolderPin(conversationId, pinned) {
+  return apiRequest(`/api/folder-items/${encodeURIComponent(conversationId)}`, {
+    method: "PATCH",
+    body: { pinned },
+    action: "Pin in folder",
+  });
+}
+
+function _lsGet(key, fallback) {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+function _lsSet(key, val) {
+  try {
+    localStorage.setItem(key, val);
+  } catch {}
+}
+let _expandedFolders = (() => {
+  try {
+    return new Set(JSON.parse(_lsGet("expandedFolders", "[]")));
+  } catch {
+    return new Set();
+  }
+})();
+const foldersSectionOpen = () => _lsGet("foldersOpen", "0") === "1";
+
+function folderIconSvg(open) {
+  const d = open
+    ? "M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"
+    : "M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z";
+  return `<svg class="folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="${d}" fill="currentColor"/></svg>`;
+}
+
+async function loadFolders() {
+  let data;
+  try {
+    data = await apiFolders();
+  } catch {
+    data = { folders: [] };
+  }
+  state.folders = data.folders || [];
+  state.folderOf = new Map();
+  for (const f of state.folders)
+    for (const c of f.conversations || []) state.folderOf.set(c.id, f.id);
+  renderFolders();
+}
+
+function renderFolders() {
+  if (!foldersTree || !foldersToggle) return;
+  const open = foldersSectionOpen();
+  foldersToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  foldersTree.hidden = !open;
+  if (!open) return;
+
+  foldersTree.innerHTML = "";
+  if (!state.folders.length) {
+    const empty = document.createElement("div");
+    empty.className = "folders-empty";
+    empty.textContent = "None yet.";
+    foldersTree.appendChild(empty);
+  }
+
+  for (const f of state.folders) {
+    const expanded = _expandedFolders.has(f.id);
+
+    const row = document.createElement("div");
+    row.className = "folder-row";
+    row.dataset.folderId = f.id;
+    row.innerHTML =
+      folderIconSvg(expanded) +
+      `<span class="folder-name">${escHtml(f.name)}</span>` +
+      `<span class="folder-count">${(f.conversations || []).length}</span>` +
+      `<button class="folder-rename-btn" title="Rename folder">✎</button>`;
+    const folderAction = row.querySelector(".folder-name");
+    makeKeyboardAction(folderAction, f.name);
+    folderAction.setAttribute("aria-expanded", String(expanded));
+
+    row.addEventListener("click", (e) => {
+      if (e.target.closest(".folder-rename-btn")) return;
+      const retainFocus = row.contains(document.activeElement);
+      if (_expandedFolders.has(f.id)) _expandedFolders.delete(f.id);
+      else _expandedFolders.add(f.id);
+      _lsSet("expandedFolders", JSON.stringify([..._expandedFolders]));
+      renderFolders();
+      if (retainFocus) foldersTree.querySelector(`[data-folder-id="${CSS.escape(f.id)}"] .folder-name`)?.focus();
+    });
+    row
+      .querySelector(".folder-rename-btn")
+      .addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const name = await openNameModal({
+          title: "Rename folder",
+          value: f.name,
+        });
+        if (name && name !== f.name) {
+          await apiRenameFolder(f.id, name);
+          await loadFolders();
+        }
+      });
+
+    // Drop target: move a dragged conversation into this folder.
+    row.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      row.classList.add("folder-drop");
+    });
+    row.addEventListener("dragleave", () => row.classList.remove("folder-drop"));
+    row.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      row.classList.remove("folder-drop");
+      const cid = e.dataTransfer.getData("text/plain");
+      // Dropping a chat back on the folder it is already in is a no-op, not a
+      // move — going through with it would clear its pin-within-folder.
+      if (cid && state.folderOf.get(cid) !== f.id) {
+        await apiMoveToFolder(f.id, cid);
+        await afterFolderChange();
+      }
+    });
+
+    foldersTree.appendChild(row);
+
+    if (expanded) {
+      const kids = document.createElement("div");
+      kids.className = "folder-children";
+      const convs = f.conversations || [];
+      if (!convs.length) {
+        const none = document.createElement("div");
+        none.className = "folder-children-empty";
+        none.textContent = "Empty";
+        kids.appendChild(none);
+      }
+      for (const c of convs) {
+        const item = document.createElement("div");
+        item.className =
+          "folder-conv-item" + (c.id === state.activeId ? " active" : "");
+        item.dataset.id = c.id;
+        item.draggable = true;
+        const folderSnippet = (c.preview || "").trim();
+        item.innerHTML =
+          (c.pinned ? '<span class="folder-pin-dot" title="Pinned">★</span>' : "") +
+          `<span class="folder-conv-title">${escHtml(c.title || "Untitled")}</span>` +
+          (folderSnippet && state.preferences.showChatSnippet
+            ? `<div class="conv-snippet">${folderSnippet}</div>`
+            : "");
+        // Label squares, placed by the same rule as the main list.
+        paintRowLabels(item, c.id, c.labels || [], ".folder-conv-title", null);
+        if (state.preferences.showSummaryHints && c.has_condensed_summary) {
+          const hintEl = document.createElement("span");
+          hintEl.className = "conv-summary-hint";
+          hintEl.textContent = "Summary";
+          hintEl.dataset.convId = c.id;
+          prepareSummaryHint(hintEl);
+          const titleSpan = item.querySelector(".folder-conv-title");
+          if (titleSpan) titleSpan.after(hintEl);
+          else item.appendChild(hintEl);
+        }
+        item.addEventListener("click", () => openConversation(c.id, item));
+        makeKeyboardAction(item.querySelector(".folder-conv-title"), `Open ${c.title || "Untitled"}`);
+        item.addEventListener("dragstart", (e) => {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", c.id);
+          item.classList.add("dragging");
+        });
+        item.addEventListener("dragend", () => item.classList.remove("dragging"));
+        kids.appendChild(item);
+      }
+      foldersTree.appendChild(kids);
+    }
+  }
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "folder-add-btn";
+  addBtn.textContent = "+ Add New Folder";
+  addBtn.addEventListener("click", createFolderFromSidebar);
+  foldersTree.appendChild(addBtn);
+}
+
+// After a folder-membership change: refresh folders + the main list (a chat may
+// have entered/left it) and the open conversation's Move-to menu state.
+async function afterFolderChange() {
+  await loadFolders();
+  // Moving a conversation into a folder drops its loose pin server-side, so
+  // state.pinnedIds goes stale — and a stale entry makes the star render
+  // filled and turns the next click into a no-op unpin.
+  await refreshPinnedList();
+  await loadConversations(false);
+}
+
+foldersToggle?.addEventListener("click", () => {
+  _lsSet("foldersOpen", foldersSectionOpen() ? "0" : "1");
+  renderFolders();
+});
+
+// ── Folders right-click menu ─────────────────────────────────────────────────
+// Right-clicking anywhere in the Folders section pops up a small menu, at the
+// cursor, with the same "New folder" dialog as the sidebar button.
+
+function closeFoldersCtxMenu() {
+  if (!foldersCtxMenu) return;
+  foldersCtxMenu.hidden = true;
+  document.removeEventListener("mousedown", onFoldersCtxMenuOutside, true);
+  document.removeEventListener("keydown", onFoldersCtxMenuKey, true);
+}
+
+function onFoldersCtxMenuOutside(e) {
+  if (!foldersCtxMenu.contains(e.target)) closeFoldersCtxMenu();
+}
+
+function onFoldersCtxMenuKey(e) {
+  if (e.key === "Escape") closeFoldersCtxMenu();
+}
+
+foldersSection?.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  closeFoldersCtxMenu();
+  foldersCtxMenu.hidden = false;
+  // Clamp to the viewport so a click near the sidebar's edge doesn't hang
+  // the menu off-screen.
+  const inset = themePixels("--popover-safe-inset");
+  const mw = foldersCtxMenu.offsetWidth;
+  const mh = foldersCtxMenu.offsetHeight;
+  const left = Math.min(e.clientX, window.innerWidth - mw - inset);
+  const top = Math.min(e.clientY, window.innerHeight - mh - inset);
+  foldersCtxMenu.style.left = `${Math.max(inset, left)}px`;
+  foldersCtxMenu.style.top = `${Math.max(inset, top)}px`;
+  document.addEventListener("mousedown", onFoldersCtxMenuOutside, true);
+  document.addEventListener("keydown", onFoldersCtxMenuKey, true);
+});
+
+foldersCtxMenu?.querySelector('[data-action="add-folder"]')?.addEventListener(
+  "click",
+  async () => {
+    closeFoldersCtxMenu();
+    await createFolderFromSidebar();
+  },
+);
+
+// Drag a conversation OUT of a folder by dropping it on the main list.
+function wireFolderDropOut(el) {
+  if (!el) return;
+  el.addEventListener("dragover", (e) => {
+    const cid = e.dataTransfer.getData("text/plain");
+    // types check (getData is empty during dragover in some browsers)
+    if ([...e.dataTransfer.types].includes("text/plain")) e.preventDefault();
+  });
+  el.addEventListener("drop", async (e) => {
+    const cid = e.dataTransfer.getData("text/plain");
+    if (cid && state.folderOf.has(cid)) {
+      e.preventDefault();
+      await apiRemoveFromFolder(cid);
+      await afterFolderChange();
+    }
+  });
+}
+wireFolderDropOut(convList);
+
+// ── Thread header actions (Move to / ⋮) ─────────────────────────────────────────
+const moveToBtn = $("move-to-btn");
+const moveToMenu = $("move-to-menu");
+const threadMoreBtn = $("thread-more-btn");
+const threadMoreMenu = $("thread-more-menu");
+
+// Bumped on every menu open/close so a slow async Move-to build (which fetches
+// the opposite provider's folders) can tell it has been superseded and must not
+// pop open a menu wired to a conversation the user has since navigated away from.
+let _moveMenuSeq = 0;
+
+function closeThreadMenus() {
+  _moveMenuSeq++;
+  restoreActionMenuFocus(moveToMenu);
+  restoreActionMenuFocus(threadMoreMenu);
+  if (moveToMenu) moveToMenu.hidden = true;
+  if (threadMoreMenu) threadMoreMenu.hidden = true;
+  document.removeEventListener("mousedown", onThreadMenuOutside, true);
+}
+function onThreadMenuOutside(e) {
+  if (
+    moveToMenu.contains(e.target) ||
+    moveToBtn.contains(e.target) ||
+    threadMoreMenu.contains(e.target) ||
+    threadMoreBtn.contains(e.target)
+  )
+    return;
+  closeThreadMenus();
+}
+
+async function buildMoveToMenu(cid = state.activeId) {
+  // The open conversation may be a Compare item from the opposite provider.
+  // Folders are provider-scoped, so offer the folders of the conversation's own
+  // provider — placing a chat in another provider's folder would hide it from
+  // both sidebars. Reuse the already-loaded set when the sides match.
+  const convProvider = state.activeProvider || state.providerSide;
+  let folders = state.folders;
+  let folderOf = state.folderOf;
+  if (convProvider !== state.providerSide) {
+    try {
+      const p = new URLSearchParams({ provider: convProvider });
+      const data = await apiRequest(`/api/folders?${p}`, {
+        action: "Load folders",
+      });
+      folders = data.folders || [];
+      folderOf = new Map();
+      for (const f of folders)
+        for (const c of f.conversations || []) folderOf.set(c.id, f.id);
+    } catch {
+      folders = [];
+      folderOf = new Map();
+    }
+  }
+  moveToMenu.innerHTML = "";
+
+  const addNew = document.createElement("button");
+  addNew.className = "thread-dropdown-item";
+  addNew.textContent = "Add New Folder";
+  addNew.addEventListener("click", async () => {
+    closeThreadMenus();
+    // Create the folder on the conversation's own side, not the sidebar's.
+    const res = await promptCreateFolder(convProvider);
+    if (res) {
+      await apiMoveToFolder(res.id, cid);
+      _syncActiveFolderState(cid, res.id);
+      await afterFolderChange();
+    }
+  });
+  moveToMenu.appendChild(addNew);
+
+  if (folderOf.has(cid)) {
+    const remove = document.createElement("button");
+    remove.className = "thread-dropdown-item";
+    remove.textContent = "Remove from Folder";
+    remove.addEventListener("click", async () => {
+      closeThreadMenus();
+      await apiRemoveFromFolder(cid);
+      _syncActiveFolderState(cid, null);
+      await afterFolderChange();
+    });
+    moveToMenu.appendChild(remove);
+  }
+
+  if (folders.length) {
+    const sep = document.createElement("div");
+    sep.className = "thread-dropdown-sep";
+    moveToMenu.appendChild(sep);
+  }
+  for (const f of folders) {
+    const b = document.createElement("button");
+    b.className = "thread-dropdown-item";
+    const isCurrent = folderOf.get(cid) === f.id;
+    if (isCurrent) b.classList.add("current");
+    b.textContent = f.name;
+    b.addEventListener("click", async () => {
+      closeThreadMenus();
+      // Already here: moving again would only clear the pin-within-folder.
+      if (isCurrent) return;
+      await apiMoveToFolder(f.id, cid);
+      _syncActiveFolderState(cid, f.id);
+      await afterFolderChange();
+    });
+    moveToMenu.appendChild(b);
+  }
+}
+
+// Keep the active conversation's tracked folder/pin state in step with a
+// Move-to action, so reopening the ⋮ menu shows the right Pin/Unpin label
+// without waiting for the conversation to be reopened. Moving into a folder
+// clears any loose pin server-side; both operations clear the in-folder pin.
+function _syncActiveFolderState(cid, folderId) {
+  if (cid !== state.activeId) return;
+  state.activeFolderId = folderId;
+  state.activeFolderPinned = false;
+  if (folderId) state.activePinned = false;
+}
+
+moveToBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (!state.activeId) return;
+  const wasOpen = !moveToMenu.hidden;
+  closeThreadMenus();
+  if (wasOpen) return;
+  const openForId = state.activeId;
+  const seq = ++_moveMenuSeq;
+  buildMoveToMenu(openForId).then(() => {
+    // The opposite-provider folder fetch is async: bail if the menu was closed,
+    // superseded by another open, or the active conversation changed meanwhile —
+    // otherwise the menu's folder handlers would act on a stale conversation.
+    if (seq !== _moveMenuSeq || state.activeId !== openForId) return;
+    moveToMenu.hidden = false;
+    prepareActionMenu(moveToMenu, moveToBtn, closeThreadMenus);
+    document.addEventListener("mousedown", onThreadMenuOutside, true);
+  });
+});
+
+threadMoreBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (!state.activeId) return;
+  const wasOpen = !threadMoreMenu.hidden;
+  closeThreadMenus();
+  if (wasOpen) return;
+  const compareItem = threadMoreMenu.querySelector('[data-action="compare"]');
+  if (compareItem) {
+    // The menu only ever *adds* to Compare. Removal is exclusively the × on the
+    // Compare tab, so a chat already in Compare shows a disabled, no-op entry
+    // rather than a "Remove from Compare" action.
+    const inCompare = !!compareTabForConv(state.activeId);
+    compareItem.textContent = "Compare";
+    compareItem.classList.toggle("current", inCompare);
+    compareItem.disabled = inCompare;
+  }
+  const pinItem = threadMoreMenu.querySelector('[data-action="pin"]');
+  if (pinItem) {
+    // Use the active conversation's own state (set on open) rather than the
+    // sidebar-scoped sets, which omit an opposite-provider Compare item.
+    if (state.activeFolderId) {
+      pinItem.textContent = state.activeFolderPinned ? "Unpin" : "Pin";
+    } else {
+      pinItem.textContent = state.activePinned ? "Unpin" : "Pin";
+    }
+  }
+  // Labels are not offered here. Setting them is the squares' job: click one to
+  // cycle it, right-click one for the full list.
+  threadMoreMenu
+    .querySelectorAll(".label-menu-injected")
+    .forEach((n) => n.remove());
+  threadMoreMenu.hidden = false;
+  prepareActionMenu(threadMoreMenu, threadMoreBtn, closeThreadMenus);
+  document.addEventListener("mousedown", onThreadMenuOutside, true);
+});
+
+threadMoreMenu?.querySelectorAll(".thread-dropdown-item").forEach((item) => {
+  item.addEventListener("click", async () => {
+    const action = item.dataset.action;
+    const cid = state.activeId;
+    closeThreadMenus();
+    if (!cid) return;
+    if (action === "compare") {
+      // Add only — never remove. Removing a Compare item is done with the × on
+      // its tab. A chat already in Compare is a no-op here.
+      if (compareTabForConv(cid)) return;
+      addToCompare(
+        cid,
+        threadTitle.textContent || "Conversation",
+        state.activeProvider || state.providerSide,
+      );
+    } else if (action === "rename") {
+      const cur = threadTitle.textContent || "";
+      const name = await openNameModal({
+        title: "Rename conversation",
+        value: cur,
+      });
+      if (!name || name === cur) return;
+      await apiUpdateConversationMeta(cid, { title: name });
+      setThreadTitle(name);
+      await loadConversations(false);
+      await refreshPinnedList();
+      await loadFolders();
+      const tab = state.tabs.find((t) => t.conversation_id === cid);
+      if (tab) {
+        tab.title = name;
+        renderTabs();
+        apiUpdateTab(tab.id, {
+          title: name,
+          conversation_id: cid,
+          tab_type: "conversation",
+        });
+      }
+    } else if (action === "pin") {
+      // Act on the active conversation's own state (set on open), which is
+      // correct even for an opposite-provider Compare item, and keep it in
+      // sync so reopening the menu shows the right label.
+      if (state.activeFolderId) {
+        const next = !state.activeFolderPinned;
+        await apiFolderPin(cid, next);
+        state.activeFolderPinned = next;
+        await loadFolders();
+      } else if (state.activePinned) {
+        await apiUnpinConversation(cid);
+        state.activePinned = false;
+        await refreshPinnedList();
+        await loadConversations(false);
+      } else {
+        await apiPinConversation(cid);
+        state.activePinned = true;
+        await refreshPinnedList();
+        await loadConversations(false);
+      }
+    } else if (action === "summary") {
+      openSummaryForConversation(cid);
+    } else if (action === "archive") {
+      await apiUpdateConversationMeta(cid, { archived: true });
+      await refreshPinnedList();
+      await afterFolderChange();
+    } else if (action === "delete") {
+      // Same behaviour as the sidebar row menu: straight to the Recycle Bin,
+      // no archiving required, other state preserved.
+      await apiUpdateConversationMeta(cid, { deleted: true });
+      await refreshPinnedList();
+      await afterFolderChange();
+    }
+  });
+});
+
+// ── Silent auto-reload ─────────────────────────────────────────────────────
+// So a code change never "looks applied but isn't fully": when the server
+// restarts with new code (it watches its own files and reloads itself) or when
+// the front-end files on disk change, the page reloads itself to stay in
+// lock-step with the backend. No banner, no prompt, no click — the app keeps
+// its place because scroll position and the open conversation are persisted on
+// unload. /api/version reports the server's start time and a fingerprint of the
+// front-end files; a change in either means "reload".
+let _autoReloadBaseline = null; // { started_at, static_sig }
+let _autoReloadTimer = null;
+async function checkForNewBuild() {
+  let d;
+  try {
+    d = await apiModelState("/api/version", { notify: false, log: false });
+  } catch (_) {
+    // Server momentarily unreachable (e.g. mid auto-restart) or too old to have
+    // this endpoint — nothing to do; the next poll will catch up.
+    return;
+  }
+  // Mid-update the files on disk are a mix of old and new: wait until the
+  // update has finished (and this page has had its reply) before reloading.
+  if (d.updating || updateRequestPending) return;
+  const now = { started_at: d.started_at, static_sig: d.static_sig || null };
+  if (_autoReloadBaseline === null) {
+    _autoReloadBaseline = now; // first reading establishes the baseline
+    return;
+  }
+  const serverRestarted = now.started_at !== _autoReloadBaseline.started_at;
+  const frontendChanged =
+    now.static_sig !== null &&
+    now.static_sig !== _autoReloadBaseline.static_sig;
+  if (serverRestarted || frontendChanged) {
+    // Reload once; the fresh page re-establishes the baseline on load.
+    _autoReloadBaseline = now;
+    location.reload();
+  }
+}
+
+function startAutoReloadWatch() {
+  checkForNewBuild();
+  // Poll on a short interval, and immediately when the tab regains focus (the
+  // usual moment right after editing files in another window).
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) checkForNewBuild();
+  });
+  window.addEventListener("focus", checkForNewBuild);
+  if (_autoReloadTimer) clearInterval(_autoReloadTimer);
+  _autoReloadTimer = setInterval(checkForNewBuild, 2000);
+}
+
+async function initApp() {
+  applyThreadHeaderCollapsed();
+  startAutoReloadWatch();
+  // A load that fails has already been shown and logged (apiRequest); carry
+  // on so the rest of the app still opens.
+  const step = async (fn) => {
+    try {
+      await fn();
+    } catch (err) {
+      if (!err || !err.reported) throw err;
+    }
+  };
+  await step(loadDatasetFormat);
+  await step(loadUiPreferences);
+  await step(loadLabelDefs);
+  syncLabelFilterOptions();
+  renderSearchHistory();
+  await step(refreshPinnedList);
+  await step(loadFolders);
+  await step(loadTabs);
+  await step(() => loadConversations(false));
+  let updateResult = "";
+  try {
+    updateResult = sessionStorage.getItem("chv-update-result") || "";
+    if (updateResult) sessionStorage.removeItem("chv-update-result");
+  } catch (_) {}
+  // Restore the last conversation viewed, else open the most recent so the
+  // reading pane is never empty on a populated database.
+  if (updateResult) {
+    await openAbout();
+    updateStatus.textContent = updateResult;
+    updateStatus.className = "update-status update-status-success";
+  } else if (state.activeSpecialView) {
+    await activateActiveTab();
+  } else if (state.lastConversationId) {
+    await openConversation(
+      state.lastConversationId,
+      findConvItemEl(state.lastConversationId),
+    );
+  } else {
+    await openMostRecentConversation();
+  }
+}
+
+initApp();
+
+messagesEl?.addEventListener("scroll", () => {
+  if (!state.activeId) return;
+  state.scrollByConversation[state.activeId] = messagesEl.scrollTop;
+});
+
+window.addEventListener("beforeunload", () => {
+  apiUpdatePreferences({
+    ...state.preferences,
+    // Don't persist a transient label view as the remembered base view.
+    conversationView: String(state.view).startsWith("label:")
+      ? state.preferences.conversationView || "recent"
+      : state.view,
+    scrollByConversation: state.scrollByConversation,
+    pageOffsetByConversation: state.pageOffsetByConversation,
+    lastConversationId: state.lastConversationId,
+  });
+});

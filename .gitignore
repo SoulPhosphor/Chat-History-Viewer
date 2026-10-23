@@ -1,0 +1,45 @@
+node_modules/
+package.json
+package-lock.json
+.claude/
+history.db
+userdata.db
+__pycache__/
+*.pyc
+.venv/
+*.pyo
+*.pyd
+*.db-shm
+*.db-wal
+.DS_Store
+
+# Private export payloads should stay out of the public starter.
+source/conversations.json
+# Backups imported through the in-app "Import New Chats" screen are renamed to
+# Provider-conversations-YYYY-MM-DD.json — keep those private too.
+source/Claude-conversations-*.json
+source/ChatGPT-conversations-*.json
+source/files/*
+source/projects/*
+source/memories.json
+source/users.json
+!source/README.md
+!source/files/.gitkeep
+!source/projects/.gitkeep
+
+# Written by the running app: automatic database copies and the error log.
+backups/
+logs/
+# The old files kept by the last in-app update, so it can be undone.
+update-backup/
+.update-backup.new/
+.update-backup.old/
+.update.lock
+
+# Shared background job status, cancellation and OS lock.
+.import.lock
+.background-jobs/
+
+# API keys (AUDIT.md #40). Never commit these.
+.env
+.env.local

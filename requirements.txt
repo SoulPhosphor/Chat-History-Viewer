@@ -1,0 +1,6 @@
+# Claude History Viewer needs Python 3.12 or newer.
+# The app itself uses only the Python standard library: nothing is required.
+#
+# Optional: DOCX text preview. Install with
+#   pip install -r requirements.txt
+python-docx==1.2.0
