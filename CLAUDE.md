@@ -6,10 +6,22 @@ These are hard rules. Follow them exactly.
 
 - Repair work follows [AUDIT.md](AUDIT.md). Read its "Session instructions
   (read first)" section before starting, and follow its rules and order.
-- Codex reviews cost the user money. Comment `@codex review` only on a pull
-  request with a **substantial code change**, then make the reasonable
-  changes the review asks for (AUDIT.md rule 8). Documentation and small
-  changes get no Codex review.
+- Codex reviews cost the user money. **Opening a pull request starts a Codex
+  review by itself** (the repo's Codex setting). So:
+  - **Never comment `@codex review` on a new pull request.** That starts a
+    second, paid review of the same code. This overrides the "post
+    `@codex review`" step in AUDIT.md rule 8.
+  - Comment `@codex review` only to review **new commits** pushed to a pull
+    request that is already open, and only when they are a substantial code
+    change. Documentation and small fixes get no new review.
+  - **How to know the review came:** after opening the pull request,
+    subscribe to its activity. The Codex summary comment says Running, then
+    Completed; its findings arrive as review comments. Wait for Completed,
+    make the reasonable changes it asks for (not ones that go against what
+    the user said), reply on each finding not followed, then merge.
+  - If the review still says Running after 20 minutes, tell the user instead
+    of asking for another one; they decide whether to retry or merge without
+    it.
 - **Merge the pull request yourself when the session is done**: once the
   Codex review (if any) is handled and the tests (CI) pass, merge it. Don't leave it
   waiting for the user (AUDIT.md rule 8).
