@@ -475,14 +475,13 @@
     --bookmark-input-border: var(--border);
     --bookmark-input-focus-border: var(--accent);
     --bookmark-input-color: var(--text);
-    /* Little "name this bookmark" dialog popover. */
-    --bookmark-dialog-bg: var(--bg);
-    --bookmark-dialog-border: var(--border);
-    --bookmark-dialog-shadow: var(--shadow-popover);
-    --bookmark-dialog-radius: 8px;
-    --bookmark-dialog-padding: 8px;
-    --bookmark-dialog-width: 220px;
-    --bookmark-dialog-fallback-height: 44px;
+    /* Name field + Save shown once, in line with the icon, on a new bookmark. */
+    --bookmark-name-inline-gap: var(--space-4px);
+    --bookmark-name-inline-width: 220px;
+    --bookmark-name-inline-font-size: var(--font-size-13px);
+    --bookmark-name-inline-font-weight: normal;
+    --bookmark-name-inline-border: var(--accent);
+    --bookmark-name-inline-border-width: var(--stroke-2px);
     /* Compact bar (2–4 bookmarks) beneath the chat header. */
     --bookmark-bar-bg: var(--sidebar-bg);
     --bookmark-bar-border: var(--border);

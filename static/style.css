@@ -1380,30 +1380,26 @@ kbd {
   border-color: var(--bookmark-input-focus-border);
 }
 
-/* Little "name this bookmark" dialog shown when a bookmark is first added. */
-.bookmark-name-dialog {
-  position: fixed;
-  z-index: 1000;
-  width: var(--bookmark-dialog-width);
-  background: var(--bookmark-dialog-bg);
-  border: var(--stroke-1px) solid var(--bookmark-dialog-border);
-  border-radius: var(--bookmark-dialog-radius);
-  box-shadow: var(--bookmark-dialog-shadow);
-  padding: var(--bookmark-dialog-padding);
+/* Name field + Save shown once, in line with the icon, when a bookmark is
+   first added. The heavier outline makes it obvious it just appeared. */
+.bookmark-name-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bookmark-name-inline-gap);
 }
-.bookmark-name-input {
-  width: 100%;
-  font-size: var(--font-size-13px);
+.bookmark-name-inline-input {
+  width: var(--bookmark-name-inline-width);
+  font-size: var(--bookmark-name-inline-font-size);
+  font-weight: var(--bookmark-name-inline-font-weight);
   font-family: inherit;
   color: var(--bookmark-input-color);
   background: var(--bookmark-input-bg);
-  border: var(--stroke-1px) solid var(--bookmark-input-border);
+  border: var(--bookmark-name-inline-border-width) solid var(--bookmark-name-inline-border);
   border-radius: var(--radius-5px);
-  padding: var(--space-6px) var(--space-8px);
+  padding: var(--space-2px) var(--space-6px);
 }
-.bookmark-name-input:focus {
+.bookmark-name-inline-input:focus {
   outline: none;
-  border-color: var(--bookmark-input-focus-border);
 }
 
 /* Header control that opens the bookmark list. */
@@ -1420,6 +1416,11 @@ kbd {
   color: var(--bookmark-icon-color);
   border-radius: var(--radius-6px);
   flex-shrink: 0;
+}
+/* The display rule above beats the UA [hidden] rule; with no bookmarks the
+   button must not show. */
+#bookmarks-toggle-btn[hidden] {
+  display: none;
 }
 #bookmarks-toggle-btn:hover {
   color: var(--bookmark-icon-hover-color);

@@ -169,6 +169,7 @@ async function toggleBookmark(seq, btn, metaRow) {
     if (btn) setBookmarkBtnState(btn, false);
     const titleEl = metaRow?.querySelector(`.bookmark-title[data-seq="${seq}"]`);
     if (titleEl) titleEl.remove();
+    closeBookmarkNameDialog();
     refreshBookmarkSurfaces();
     try {
       await apiDeleteBookmark(existing.id);
@@ -191,44 +192,53 @@ async function toggleBookmark(seq, btn, metaRow) {
     const titleEl = metaRow ? ensureBookmarkTitleEl(metaRow, seq) : null;
     if (titleEl) renderBookmarkTitle(titleEl, res.bookmark);
     refreshBookmarkSurfaces();
-    // Offer the little naming dialog right away.
+    // Offer the naming field right away.
     openBookmarkNameDialog(res.bookmark, btn, titleEl);
   }
 }
 
-// ── "Name this bookmark" dialog ───────────────────────────────────────────────
+// ── "Name this bookmark" field ────────────────────────────────────────────────
+// Shown once, right after a bookmark is added: a name field and a Save button
+// in line with the bookmark icon, on the side away from the speaker's name.
+// Later renames happen on the title beside the date/time.
 function closeBookmarkNameDialog() {
-  const dlg = $("bookmark-name-dialog");
-  if (dlg) dlg.remove();
+  const box = $("bookmark-name-inline");
+  if (box) box.remove();
 }
 
 function openBookmarkNameDialog(bm, anchorEl, titleEl) {
   closeBookmarkNameDialog();
-  const dlg = document.createElement("div");
-  dlg.className = "bookmark-name-dialog";
-  dlg.id = "bookmark-name-dialog";
-  dlg.setAttribute("role", "dialog");
-  dlg.setAttribute("aria-label", "Name bookmark");
+  if (!anchorEl?.isConnected) return;
+  const box = document.createElement("span");
+  box.className = "bookmark-name-inline";
+  box.id = "bookmark-name-inline";
   const input = document.createElement("input");
   input.type = "text";
-  input.className = "bookmark-name-input";
+  input.className = "bookmark-name-inline-input";
   input.setAttribute("aria-label", "Bookmark name");
   input.placeholder = "Name this bookmark…";
   input.value = bm.name || "";
-  dlg.appendChild(input);
-  document.body.appendChild(dlg);
-  positionBookmarkPopover(dlg, anchorEl);
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "summary-btn summary-btn-primary bookmark-name-inline-save";
+  save.textContent = "Save";
+  box.append(input, save);
+  // The icon sits left of the name on the user's messages and right of it on
+  // the assistant's, so the field goes on the icon's outer side.
+  const isUser = !!anchorEl.closest(".message.user");
+  if (isUser) anchorEl.before(box);
+  else anchorEl.after(box);
   input.focus();
 
   let done = false;
-  const finish = async (save) => {
+  const finish = async (doSave) => {
     if (done) return;
     done = true;
     const val = input.value.trim();
-    const retainFocus = document.activeElement === input;
+    const retainFocus = box.contains(document.activeElement);
     closeBookmarkNameDialog();
     if (retainFocus && anchorEl?.isConnected) anchorEl.focus();
-    if (save) {
+    if (doSave) {
       let nb = { ...bookmarkById(bm.id) || bm, name: val };
       try {
         const res = await apiRenameBookmark(bm.id, val);
@@ -237,6 +247,7 @@ function openBookmarkNameDialog(bm, anchorEl, titleEl) {
         // Not saved: keep showing the name the server has.
         nb = bookmarkById(bm.id) || bm;
       }
+      if (!bookmarkById(bm.id)) return; // removed meanwhile
       updateLocalBookmark(nb);
       if (titleEl) renderBookmarkTitle(titleEl, nb);
       syncMessageBookmarkDom(nb.seq);
@@ -252,26 +263,13 @@ function openBookmarkNameDialog(bm, anchorEl, titleEl) {
       finish(false);
     }
   });
-  // Enter, blur and clicking away all save; only Escape leaves it unnamed.
-  input.addEventListener("blur", () => finish(true));
-}
-
-function positionBookmarkPopover(dlg, anchorEl) {
-  const r = anchorEl.getBoundingClientRect();
-  const margin = themePixels("--popover-menu-gap");
-  const w = dlg.offsetWidth || themePixels("--bookmark-dialog-width");
-  let left = r.left;
-  if (left + w + margin > window.innerWidth) {
-    left = window.innerWidth - w - margin;
-  }
-  left = Math.max(margin, left);
-  let top = r.bottom + margin;
-  const h = dlg.offsetHeight || themePixels("--bookmark-dialog-fallback-height");
-  if (top + h + margin > window.innerHeight) {
-    top = Math.max(margin, r.top - h - margin);
-  }
-  dlg.style.left = `${left}px`;
-  dlg.style.top = `${top}px`;
+  // Pressing Save would blur the field first; keep focus so the click lands.
+  save.addEventListener("mousedown", (e) => e.preventDefault());
+  save.addEventListener("click", () => finish(true));
+  // Enter, Save, and clicking away all save; only Escape leaves it unnamed.
+  box.addEventListener("focusout", (e) => {
+    if (!box.contains(e.relatedTarget)) finish(true);
+  });
 }
 
 // ── Inline rename of the title beside the date/time ───────────────────────────
