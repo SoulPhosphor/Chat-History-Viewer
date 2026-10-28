@@ -488,14 +488,17 @@ window.addEventListener("beforeunload", (event) => {
 });
 
 // ── Delete ───────────────────────────────────────────────────────────────────
+// Resolves true once deleted. Also used by Global Message Sticky Notes, for
+// notes of any chat.
 async function deleteStickyNote(id) {
   const ok = await openConfirm({ title: "Delete This Sticky Note?", text: "", okLabel: "Okay" });
-  if (!ok) return;
+  if (!ok) return false;
   try {
     await apiDeleteStickyNote(id);
   } catch (_) {
-    return;
+    return false;
   }
+  if (!stickyNoteById(id)) return true; // a note of a chat that isn't open
   const note = stickyNoteById(id);
   const open = _stickyEditors.get(id);
   _openStickyNotes.delete(id);
@@ -504,6 +507,27 @@ async function deleteStickyNote(id) {
   state.stickyNotes = state.stickyNotes.filter((n) => n.id !== id);
   if (note) syncMessageStickyDom(note.seq);
   refreshStickySurfaces();
+  return true;
+}
+
+// Rename from Global Message Sticky Notes (any chat). Resolves the renamed
+// note, or null.
+async function renameStickyNoteFromList(conversationId, note) {
+  const next = await openNameModal({ title: "Rename sticky note", value: note.title || "", okLabel: "Rename" });
+  const title = String(next || "").replace(/\s+/g, " ").trim();
+  if (!title || title === note.title) return null;
+  let res;
+  try {
+    res = await apiUpdateStickyNote(note.id, { title });
+  } catch (_) {
+    return null;
+  }
+  if (!res?.note) return null;
+  if (conversationId === state.activeId && stickyNoteById(note.id)) {
+    updateLocalStickyNote({ ...stickyNoteById(note.id), title: res.note.title, updated_at: res.note.updated_at });
+    stickyNoteChanged(note.id);
+  }
+  return res.note;
 }
 
 // ── Create (⋮ → Create Sticky Note) ──────────────────────────────────────────
@@ -635,4 +659,6 @@ $("sticky-panel-close")?.addEventListener("click", closeStickyViews);
 window.stickyNotes = {
   create: createStickyNote,
   goTo: goToStickyNote,
+  rename: (conversationId, note) => renameStickyNoteFromList(conversationId, note),
+  remove: (conversationId, id) => deleteStickyNote(id),
 };

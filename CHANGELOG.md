@@ -3,6 +3,15 @@
 The version number lives in `version.py`. Each release adds an entry here,
 newest first.
 
+## 1.11.0 — 2026-10-28
+
+- **Global Message Sticky Notes** in the briefcase menu, under Global
+  Bookmarks: the Global Bookmarks screen for message sticky notes (search in
+  titles, sticky notes or both, sort, collapse, the same paging and Back). A
+  note opens its chat with the note open. Its ⋮ menu has Add to Scratch Pad,
+  Copy Internal Link, Rename and Delete. Both screens are built by one shared
+  piece of code, so they stay the same.
+
 ## 1.10.1 — 2026-10-28
 
 - **Snapshots** now keep message edits, hidden messages and sticky notes, and

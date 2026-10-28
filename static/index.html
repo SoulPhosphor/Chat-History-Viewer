@@ -467,6 +467,14 @@
         <button
           class="sidebar-menu-item"
           role="menuitem"
+          data-action="global-sticky-notes"
+        >
+          <span class="sidebar-menu-item-icon" aria-hidden="true">🗒️</span>
+          <span class="sidebar-menu-item-label">Global Message Sticky Notes</span>
+        </button>
+        <button
+          class="sidebar-menu-item"
+          role="menuitem"
           data-action="projects"
         >
           <span class="sidebar-menu-item-icon" aria-hidden="true">📁</span>
@@ -1057,6 +1065,68 @@
           <div id="global-bookmarks-scroll">
             <div id="global-bookmarks-list"></div>
             <div id="gb-sentinel" aria-hidden="true"></div>
+          </div>
+        </div>
+
+        <!-- Global Message Sticky Notes: the Global Bookmarks screen for
+             message sticky notes (bookmarks_hub.js createGlobalHub). -->
+        <div id="global-sticky-panel" hidden>
+          <div class="thread-header">
+            <h1>Global Message Sticky Notes</h1>
+            <div id="global-sticky-meta"></div>
+          </div>
+          <div id="global-sticky-toolbar">
+            <div class="gb-search-wrap">
+              <svg
+                class="gb-search-icon"
+                viewBox="0 0 20 20"
+                fill="none"
+                aria-hidden="true"
+              >
+                <circle
+                  cx="9"
+                  cy="9"
+                  r="6"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                />
+                <path
+                  d="M14 14l3 3"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <input
+                id="gsn-search"
+                type="search"
+                placeholder="Search titles and sticky notes…"
+                autocomplete="off"
+                aria-label="Search titles and sticky notes"
+              />
+              <select id="gsn-search-scope" aria-label="What to search">
+                <option value="both">Both</option>
+                <option value="titles">Titles</option>
+                <option value="sticky_notes">Sticky Notes</option>
+              </select>
+            </div>
+            <div class="gb-controls">
+              <label class="gb-sort-wrap">
+                <span class="gb-control-label">Sort</span>
+                <select id="gsn-sort" aria-label="Sort conversations">
+                  <option value="newest">Newest first</option>
+                  <option value="oldest">Oldest first</option>
+                </select>
+              </label>
+              <label class="gb-collapse-wrap" for="gsn-collapse-toggle">
+                <input type="checkbox" id="gsn-collapse-toggle" />
+                <span class="gb-control-label gb-caps">Collapse Sticky Notes</span>
+              </label>
+            </div>
+          </div>
+          <div id="global-sticky-scroll">
+            <div id="global-sticky-list"></div>
+            <div id="gsn-sentinel" aria-hidden="true"></div>
           </div>
         </div>
 

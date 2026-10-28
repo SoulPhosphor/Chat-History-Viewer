@@ -5507,17 +5507,20 @@ kbd {
    indented, undecorated list of its bookmarks. All sizes and colours live in
    variables so a later theme pass can retune the whole view in one place. */
 
-#global-bookmarks-panel {
+#global-bookmarks-panel,
+#global-sticky-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-#global-bookmarks-panel[hidden] {
+#global-bookmarks-panel[hidden],
+#global-sticky-panel[hidden] {
   display: none;
 }
 
-#global-bookmarks-toolbar {
+#global-bookmarks-toolbar,
+#global-sticky-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -5550,7 +5553,8 @@ kbd {
   color: var(--muted);
   flex-shrink: 0;
 }
-#gb-search {
+#gb-search,
+#gsn-search {
   flex: 1;
   min-width: 0;
   border: none;
@@ -5561,7 +5565,8 @@ kbd {
   color: var(--gb-field-color);
   outline: none;
 }
-#gb-search-scope {
+#gb-search-scope,
+#gsn-search-scope {
   border: none;
   border-left: var(--stroke-1px) solid var(--gb-field-border);
   background: transparent;
@@ -5597,7 +5602,8 @@ kbd {
      transform — uppercasing it here would shout the whole label. */
   font-weight: var(--weight-semibold);
 }
-#gb-sort {
+#gb-sort,
+#gsn-sort {
   height: var(--gb-field-height);
   border: var(--stroke-1px) solid var(--gb-field-border);
   border-radius: var(--gb-field-radius);
@@ -5608,28 +5614,34 @@ kbd {
   cursor: pointer;
   outline: none;
 }
-#gb-sort:focus {
+#gb-sort:focus,
+#gsn-sort:focus {
   border-color: var(--gb-field-focus-border);
 }
-#gb-collapse-toggle {
+#gb-collapse-toggle,
+#gsn-collapse-toggle {
   width: var(--size-15px);
   height: var(--size-15px);
   cursor: pointer;
   accent-color: var(--accent);
 }
 
-#global-bookmarks-scroll {
+#global-bookmarks-scroll,
+#global-sticky-scroll {
   flex: 1;
   overflow-y: auto;
   padding: var(--gb-list-padding);
 }
-#global-bookmarks-scroll::-webkit-scrollbar {
+#global-bookmarks-scroll::-webkit-scrollbar,
+#global-sticky-scroll::-webkit-scrollbar {
   width: var(--size-6px);
 }
-#global-bookmarks-scroll::-webkit-scrollbar-track {
+#global-bookmarks-scroll::-webkit-scrollbar-track,
+#global-sticky-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
-#global-bookmarks-scroll::-webkit-scrollbar-thumb {
+#global-bookmarks-scroll::-webkit-scrollbar-thumb,
+#global-sticky-scroll::-webkit-scrollbar-thumb {
   background: var(--muted);
   border-radius: var(--radius-4px);
 }
@@ -5722,7 +5734,8 @@ kbd {
   text-decoration: line-through;
 }
 
-#global-bookmarks-meta {
+#global-bookmarks-meta,
+#global-sticky-meta {
   color: var(--muted);
 }
 .gb-empty {
@@ -5781,7 +5794,7 @@ body.resizing-rows { cursor: row-resize; user-select: none; }
    its existing absolute-positioning reference and desktop appearance. */
 #thread, #settings-panel, #labels-panel, #about-panel, #gallery,
 #memories-panel, #projects-panel, #att-report-panel, #import-audit-panel,
-#claude-models-panel, #import-new-panel, #gizmos-panel, #global-bookmarks-panel {
+#claude-models-panel, #import-new-panel, #gizmos-panel, #global-bookmarks-panel, #global-sticky-panel {
   min-width: 0;
   min-height: 0;
   container-type: inline-size;
@@ -5812,7 +5825,8 @@ body.resizing-rows { cursor: row-resize; user-select: none; }
   #settings-content, #labels-content, #about-content, #gallery-grid,
   #memories-content, #projects-content, #att-report-content,
   #import-audit-content, #claude-models-content, #import-new-content,
-  #gizmos-content, #global-bookmarks-toolbar, #global-bookmarks-scroll {
+  #gizmos-content, #global-bookmarks-toolbar, #global-bookmarks-scroll,
+  #global-sticky-toolbar, #global-sticky-scroll {
     padding-left: var(--content-padding-compact);
     padding-right: var(--content-padding-compact);
   }

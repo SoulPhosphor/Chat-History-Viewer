@@ -2245,6 +2245,8 @@ async function activateActiveTab() {
   if (state.activeSpecialView === "scratch_pads") return openScratchPads(false);
   if (state.activeSpecialView === "global_bookmarks")
     return openGlobalBookmarks(false);
+  if (state.activeSpecialView === "global_sticky_notes")
+    return openGlobalStickyNotes(false);
   if (state.activeSpecialView === "memories") return openMemories(false);
   if (state.activeSpecialView === "projects") return openProjects(false);
   if (state.activeSpecialView === "attachment_report")
@@ -2328,6 +2330,8 @@ function hideAllPanels() {
   labelsPanel.hidden = true;
   const gbPanelEl = document.getElementById("global-bookmarks-panel");
   if (gbPanelEl) gbPanelEl.hidden = true;
+  const gsnPanelEl = document.getElementById("global-sticky-panel");
+  if (gsnPanelEl) gsnPanelEl.hidden = true;
   if (typeof scratchPadPanelsHidden === "function") scratchPadPanelsHidden();
   closeArtifactPanel();
   closeFilePanel();
@@ -4177,6 +4181,12 @@ async function switchProviderSide(side) {
     typeof gbReloadForProvider === "function"
   ) {
     gbReloadForProvider();
+  }
+  if (
+    state.activeSpecialView === "global_sticky_notes" &&
+    typeof gsnReloadForProvider === "function"
+  ) {
+    gsnReloadForProvider();
   }
   // So is the Attachment Report.
   if (state.activeSpecialView === "attachment_report") {

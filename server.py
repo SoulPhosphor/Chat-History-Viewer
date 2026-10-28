@@ -2490,6 +2490,8 @@ class Handler(BaseHTTPRequestHandler):
             self._api_notes_get(urllib.parse.unquote(path[len("/api/notes/"):]))
         elif path == "/api/global-bookmarks":
             self._api_global_bookmarks(qs)
+        elif path == "/api/global-sticky-notes":
+            self._api_global_sticky_notes(qs)
         elif path.startswith("/api/bookmarks/"):
             self._api_bookmarks_get(urllib.parse.unquote(path[len("/api/bookmarks/"):]))
         elif path == "/api/version":
@@ -4672,20 +4674,59 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
 
     def _api_global_bookmarks(self, qs):
-        # Every conversation that carries at least one bookmark, scoped to the
-        # side (Claude / ChatGPT) currently in view — the two never mix, like the
-        # rest of the app. Ordered by the last message the *user* sent in each
-        # conversation (bookmarks and summaries never move that mark), newest
-        # first by default. Paginated 25 conversations at a time (bookmarks are
-        # not counted toward the page size). An optional search narrows by
-        # conversation title, bookmark name, or both.
+        # Every conversation that carries at least one bookmark (see
+        # _global_marked_conversations), each with its bookmarks.
+        def bookmarks_of(conn, cid):
+            message_ids.reanchor_bookmarks(conn, cid)
+            bms = conn.execute(
+                "SELECT id, seq, name, message_uuid FROM udb.conversation_bookmarks "
+                "WHERE conversation_id = ? ORDER BY seq",
+                (cid,),
+            ).fetchall()
+            # A bookmark whose message is gone stays listed (it is the
+            # user's), marked missing so it never opens another message.
+            return {"bookmarks": [
+                {**dict(b), "missing": message_ids.bookmark_missing(conn, cid, b)}
+                for b in bms
+            ]}
+        self._global_marked_conversations(
+            qs, table="conversation_bookmarks", scope_name="bookmarks",
+            search_sql="b2.name LIKE ?", search_params=1, items=bookmarks_of)
+
+    def _api_global_sticky_notes(self, qs):
+        # Every conversation with at least one message sticky note, each with
+        # its notes (title search covers the note's title and text).
+        def notes_of(conn, cid):
+            notes = []
+            for n in conn.execute(
+                "SELECT id, seq, title, message_uuid FROM udb.sticky_notes "
+                "WHERE conversation_id = ? ORDER BY seq",
+                (cid,),
+            ).fetchall():
+                seq = message_ids.locate(conn, cid, n["message_uuid"], n["seq"])
+                notes.append({**dict(n), "seq": n["seq"] if seq is None else seq,
+                              "missing": seq is None})
+            notes.sort(key=lambda n: n["seq"])
+            return {"sticky_notes": notes}
+        self._global_marked_conversations(
+            qs, table="sticky_notes", scope_name="sticky_notes",
+            search_sql="(b2.title LIKE ? OR b2.body LIKE ?)", search_params=2, items=notes_of)
+
+    def _global_marked_conversations(self, qs, *, table, scope_name, search_sql, search_params, items):
+        # Conversations with at least one row in `table` (bookmarks or sticky
+        # notes), scoped to the side (Claude / ChatGPT) currently in view — the
+        # two never mix, like the rest of the app. Ordered by the last message
+        # the *user* sent in each conversation, newest first by default.
+        # Paginated 25 conversations at a time (the rows are not counted toward
+        # the page size). An optional search narrows by conversation title, the
+        # rows' own text, or both.
         provider = query_rules.provider_from_qs(qs)
 
         sort = ((qs.get("sort") or ["newest"])[0]).strip().lower()
         order = "ASC" if sort == "oldest" else "DESC"
 
         scope = ((qs.get("scope") or ["both"])[0]).strip().lower()
-        if scope not in ("titles", "bookmarks", "both"):
+        if scope not in ("titles", scope_name, "both"):
             scope = "both"
         q = ((qs.get("q") or [""])[0]).strip()
 
@@ -4702,7 +4743,7 @@ class Handler(BaseHTTPRequestHandler):
         conn = open_db(self.db_path)
         try:
             where = [
-                "EXISTS (SELECT 1 FROM udb.conversation_bookmarks b "
+                f"EXISTS (SELECT 1 FROM udb.{table} b "
                 "WHERE b.conversation_id = c.id)",
                 NOT_DELETED,
             ]
@@ -4716,11 +4757,11 @@ class Handler(BaseHTTPRequestHandler):
                     terms.append(
                         f"{DISPLAY_TITLE} LIKE ?")
                     params.append(like)
-                if scope in ("bookmarks", "both"):
+                if scope in (scope_name, "both"):
                     terms.append(
-                        "EXISTS (SELECT 1 FROM udb.conversation_bookmarks b2 "
-                        "WHERE b2.conversation_id = c.id AND b2.name LIKE ?)")
-                    params.append(like)
+                        f"EXISTS (SELECT 1 FROM udb.{table} b2 "
+                        f"WHERE b2.conversation_id = c.id AND {search_sql})")
+                    params.extend([like] * search_params)
                 where.append("(" + " OR ".join(terms) + ")")
             where_sql = " AND ".join(where)
 
@@ -4749,26 +4790,13 @@ class Handler(BaseHTTPRequestHandler):
                 tuple(params) + (limit, offset),
             ).fetchall()
 
-            convs = []
-            for r in rows:
-                message_ids.reanchor_bookmarks(conn, r["id"])
-                bms = conn.execute(
-                    "SELECT id, seq, name, message_uuid FROM udb.conversation_bookmarks "
-                    "WHERE conversation_id = ? ORDER BY seq",
-                    (r["id"],),
-                ).fetchall()
-                convs.append({
-                    "id": r["id"],
-                    "title": r["title"],
-                    "provider": r["provider"],
-                    "last_user_time": r["last_user_time"],
-                    # A bookmark whose message is gone stays listed (it is the
-                    # user's), marked missing so it never opens another message.
-                    "bookmarks": [
-                        {**dict(b), "missing": message_ids.bookmark_missing(conn, r["id"], b)}
-                        for b in bms
-                    ],
-                })
+            convs = [{
+                "id": r["id"],
+                "title": r["title"],
+                "provider": r["provider"],
+                "last_user_time": r["last_user_time"],
+                **items(conn, r["id"]),
+            } for r in rows]
 
             self.send_json({
                 "conversations": convs,
