@@ -482,6 +482,30 @@
     --bookmark-name-inline-font-weight: normal;
     --bookmark-name-inline-border: var(--accent);
     --bookmark-name-inline-border-width: var(--stroke-2px);
+    /* Message versions (message_versions.js): the switcher's version name,
+       the footer under a message, hidden versions, Restore, Edit Message. */
+    --branch-label-size: var(--font-size-12px);
+    --branch-label-weight: var(--weight-semibold);
+    --branch-label-color: var(--text);
+    --message-icons-gap: var(--space-4px);
+    --message-version-footer-gap: var(--space-8px);
+    --message-version-footer-margin: var(--space-4px);
+    --message-hidden-links-gap: var(--bookmark-bar-gap);
+    --message-hidden-link-size: var(--message-time-size);
+    --message-hidden-link-color: var(--muted);
+    --message-hidden-link-active-color: var(--text);
+    --message-restore-size: var(--bookmark-bar-link-size);
+    --message-restore-color: var(--bookmark-bar-link-color);
+    --message-edit-gap: var(--space-8px);
+    /* Sticky notes under a message (sticky_notes.js). */
+    --sticky-note-gap: var(--space-8px);
+    --sticky-note-padding: var(--bookmark-panel-padding);
+    --sticky-note-border: var(--border);
+    --sticky-note-radius: var(--radius-8px);
+    --sticky-note-bg: var(--sidebar-bg);
+    --sticky-note-icon-size: var(--bookmark-icon-size);
+    --sticky-note-icon-color: var(--bookmark-active-color);
+    --sticky-note-min-height: 4em;
     /* Compact bar (2–4 bookmarks) beneath the chat header. */
     --bookmark-bar-bg: var(--sidebar-bg);
     --bookmark-bar-border: var(--border);

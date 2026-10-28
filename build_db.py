@@ -538,7 +538,8 @@ def _claude_active_path(conv: dict, cid: str, raw_msgs: list):
     a tree; messages sharing the same UUID are human/assistant pairs in the same
     "turn slot".  Multiple children with the same (parent, sender) are retries.
     We walk the active path (always taking the LAST sibling = most recent edit)
-    and record all siblings so the UI can show ← / → navigation.
+    and record all siblings (each with its export id) so the UI can switch
+    between versions.
 
     Returns (msgs, artifacts).  Returns ([], []) when no active path can be
     recovered — the caller decides how to fall back rather than dropping the
@@ -611,6 +612,10 @@ def _claude_active_path(conv: dict, cid: str, raw_msgs: list):
                     "asst_content":     asst_text,
                     "asst_attachments": asst_atts,
                     "asst_artifact_ids": asst_artifact_ids,
+                    # The export's own ids for this version and its reply, so
+                    # edits, hiding, notes and links stay on this exact version.
+                    "uuid":             _message_uuid(sib),
+                    "asst_uuid":        _message_uuid(sib_asst) if sib_asst else None,
                 })
             siblings_h_data = json.dumps(sibs, ensure_ascii=False)
 
@@ -685,7 +690,8 @@ def _claude_active_path(conv: dict, cid: str, raw_msgs: list):
                 for sib in siblings_a:
                     st, sa = claude_message_parts(sib)
                     sibs.append({"content": st, "attachments": sa,
-                                 "artifact_ids": claude_artifact_ids(sib)})
+                                 "artifact_ids": claude_artifact_ids(sib),
+                                 "uuid": _message_uuid(sib)})
                 siblings_a_data = json.dumps(sibs, ensure_ascii=False)
 
             if a_text or a_atts or a_artifact_ids:

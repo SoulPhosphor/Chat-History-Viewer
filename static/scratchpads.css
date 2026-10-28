@@ -426,6 +426,9 @@ body.scratchpads-open #simple-search-toggle {
 .scratchpad-popup-note:empty {
   display: none;
 }
+.scratchpad-advanced-btn[hidden] {
+  display: none;
+}
 .scratchpad-advanced-btn {
   display: flex;
   align-items: center;

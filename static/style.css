@@ -1402,8 +1402,11 @@ kbd {
   outline: none;
 }
 
-/* Header control that opens the bookmark list. */
-#bookmarks-toggle-btn {
+/* Header controls that open the bookmark list and the sticky note list, and
+   the hidden-messages eye. */
+#bookmarks-toggle-btn,
+#sticky-notes-toggle-btn,
+#hidden-messages-toggle-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1419,10 +1422,14 @@ kbd {
 }
 /* The display rule above beats the UA [hidden] rule; with no bookmarks the
    button must not show. */
-#bookmarks-toggle-btn[hidden] {
+#bookmarks-toggle-btn[hidden],
+#sticky-notes-toggle-btn[hidden],
+#hidden-messages-toggle-btn[hidden] {
   display: none;
 }
-#bookmarks-toggle-btn:hover {
+#bookmarks-toggle-btn:hover,
+#sticky-notes-toggle-btn:hover,
+#hidden-messages-toggle-btn:hover {
   color: var(--bookmark-icon-hover-color);
   background: var(--hover);
 }
@@ -2571,11 +2578,25 @@ kbd {
   margin-top: var(--space-8px);
   padding: var(--space-3px) 0;
 }
-.message.user .branch-nav {
-  justify-content: flex-end;
+/* The switcher sits right aligned under every message (in the version
+   footer, message_versions.js). */
+.branch-nav {
+  margin-left: auto;
 }
-.message.assistant .branch-nav {
-  justify-content: flex-start;
+.branch-nav[hidden],
+.branch-btn[hidden],
+.branch-label[hidden] {
+  display: none;
+}
+.branch-nav-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.branch-label {
+  font-size: var(--branch-label-size);
+  font-weight: var(--branch-label-weight);
+  color: var(--branch-label-color);
 }
 
 .branch-btn {
@@ -2610,6 +2631,122 @@ kbd {
   min-width: var(--size-30px);
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Message versions: footer, hidden versions, Restore, Edit Message ───── */
+.message[hidden],
+.message-version-footer[hidden],
+.message-hidden-links[hidden],
+.message-restore-btn[hidden],
+.bookmark-msg-btn[hidden] {
+  display: none;
+}
+.message-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--message-icons-gap);
+}
+.message-icons:empty {
+  display: none;
+}
+.message-menu-btn {
+  flex-shrink: 0;
+}
+.message-version-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--message-version-footer-gap);
+  align-self: stretch;
+  margin-top: var(--message-version-footer-margin);
+}
+/* Hidden versions, listed near the top of the message; the single-version
+   "Hidden" marker is the same link. */
+.message-hidden-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--message-hidden-links-gap);
+}
+.message.user .message-hidden-links {
+  justify-content: flex-end;
+}
+.message-hidden-link,
+.message-restore-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+.message-hidden-link {
+  font-size: var(--message-hidden-link-size);
+  color: var(--message-hidden-link-color);
+}
+.message-hidden-link[aria-pressed="true"] {
+  color: var(--message-hidden-link-active-color);
+}
+.message-hidden-link:hover,
+.message-restore-btn:hover {
+  text-decoration: underline;
+}
+.message-restore-btn {
+  font-size: var(--message-restore-size);
+  color: var(--message-restore-color);
+}
+.message-edit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--message-edit-gap);
+  max-width: 100%;
+}
+.message-edit-textarea {
+  /* Measured by message_versions.js: the space the message took up. */
+  width: var(--message-edit-width, 100%);
+  height: var(--message-edit-height, auto);
+  max-width: 100%;
+}
+.message-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--message-edit-gap);
+}
+
+/* ── Sticky notes, inline under their message ──────────────────────────── */
+.sticky-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sticky-note-gap);
+  align-self: stretch;
+  padding: var(--sticky-note-padding);
+  border: var(--stroke-1px) solid var(--sticky-note-border);
+  border-radius: var(--sticky-note-radius);
+  background: var(--sticky-note-bg);
+}
+.sticky-note-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sticky-note-gap);
+}
+.sticky-note-icon {
+  width: var(--sticky-note-icon-size);
+  height: var(--sticky-note-icon-size);
+  flex-shrink: 0;
+  color: var(--sticky-note-icon-color);
+}
+.sticky-note-editor .summary-toolbar[hidden],
+.sticky-note-actions[hidden] {
+  display: none;
+}
+.sticky-note-visual {
+  min-height: var(--sticky-note-min-height);
+}
+.sticky-note-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sticky-note-gap);
+}
+.sticky-note-status {
+  margin-right: auto;
 }
 
 .branch-no-response {

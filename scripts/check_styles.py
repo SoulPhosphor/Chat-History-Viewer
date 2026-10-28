@@ -14,6 +14,7 @@ STATIC = ROOT / "static"
 RUNTIME = {
     "--label-color", "--summary-inline-highlight-color", "--summary-swatch-color",
     "--sidebar-overlay-layer", "--advanced-results-height",
+    "--message-edit-width", "--message-edit-height",
 }
 
 

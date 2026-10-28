@@ -126,7 +126,10 @@ function ensureBookmarkTitleEl(metaRow, seq) {
       beginInlineRename(titleEl, cur);
     }
   });
-  metaRow.appendChild(titleEl);
+  // The bookmark title comes before a sticky note's title.
+  const noteTitle = metaRow.querySelector(".sticky-note-meta-title");
+  if (noteTitle) noteTitle.before(titleEl);
+  else metaRow.appendChild(titleEl);
   renderBookmarkTitle(titleEl, bookmarkForSeq(seq));
   return titleEl;
 }
