@@ -1032,13 +1032,15 @@
                     Review previously deleted chats before re-importing.
                   </option>
                 </select>
-                <label
-                  id="import-review-new-wrap"
-                  class="import-deleted-checkbox"
-                >
-                  <input type="checkbox" id="import-review-new" />
-                  Review deleted conversations that have new messages
-                </label>
+                <div id="import-review-new-wrap" class="import-deleted-checkbox">
+                  <label class="settings-switch">
+                    <input type="checkbox" role="switch" id="import-review-new" aria-labelledby="import-review-new-label" />
+                    <span class="settings-switch-track" aria-hidden="true">
+                      <span class="settings-switch-thumb"></span>
+                    </span>
+                  </label>
+                  <label id="import-review-new-label" for="import-review-new">Review deleted conversations that have new messages</label>
+                </div>
               </div>
               <div class="import-review-controls">
                 <button id="import-new-btn" type="button">

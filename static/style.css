@@ -4951,6 +4951,9 @@ kbd {
   accent-color: var(--accent);
   cursor: pointer;
 }
+.import-deleted-checkbox[hidden] {
+  display: none;
+}
 
 /* ── Import: previously-deleted review area ───────────────────────────────── */
 .import-review-area {
