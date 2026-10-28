@@ -11,7 +11,7 @@
 // "‹ 1 / 3 ›", or, once the message has an edit, the version's name
 // ("Original", "Edited", "Response 2 Edited", "Prompt 1"…) over "2 of 3".
 // Hidden versions are skipped. With the "Show hidden message placeholder"
-// setting on (or the header eye turned on) the last stop lists the hidden
+// setting on (or the header eye showing them for this chat) the last stop lists the hidden
 // ones; a message with a single version shows a small "Hidden" marker.
 // Hiding never changes anything but the version hidden.
 //
@@ -37,17 +37,20 @@ const MV_HIDDEN_PAGE = { kind: "hidden-page", id: "__hidden__" };
 // ── Conversation state ────────────────────────────────────────────────────────
 // state.messageEdits: version id -> edit {id, version_uuid, content}
 // state.hiddenItems: ids of hidden versions and edits
-// state.hiddenReveal: the header eye is on (runtime only, off on every open)
+// state.hiddenOverride: the header eye's choice for the open chat, true
+//   (show placeholders) / false (hide them) / null (follow the setting).
+//   Runtime only, back to the setting on every open; never changes the setting.
 // state.pendingMessageVersion: {seq, id, index?, reply?} from a message link
 function resetMessageVersionsForConversation(data) {
   state.messageEdits = new Map((data.message_edits || []).map((e) => [e.version_uuid, e]));
   state.hiddenItems = new Set(data.hidden_items || []);
-  state.hiddenReveal = false;
+  state.hiddenOverride = null;
   syncHiddenHeaderButton();
 }
 
 function mvPlaceholdersOn() {
-  return state.preferences.showHiddenPlaceholders !== false || !!state.hiddenReveal;
+  if (state.hiddenOverride != null) return state.hiddenOverride;
+  return state.preferences.showHiddenPlaceholders !== false;
 }
 
 // ── Building a message's versions ─────────────────────────────────────────────
@@ -504,12 +507,14 @@ async function restoreDisplayed(slot) {
 }
 
 // ── Header eye: shows or hides the hidden-message placeholders ───────────────
+// It starts as the Chat Settings default (open eye: placeholders shown) and
+// flips them for this chat only.
 function syncHiddenHeaderButton() {
   const btn = $("hidden-messages-toggle-btn");
   if (!btn) return;
   const any = !!state.activeId && (state.hiddenItems?.size || 0) > 0;
   btn.hidden = !any;
-  const on = !!state.hiddenReveal;
+  const on = mvPlaceholdersOn();
   btn.setAttribute("aria-pressed", String(on));
   btn.title = on ? "Hide hidden message placeholders" : "Show hidden message placeholders";
   btn.setAttribute("aria-label", btn.title);
@@ -517,7 +522,7 @@ function syncHiddenHeaderButton() {
 }
 
 $("hidden-messages-toggle-btn")?.addEventListener("click", () => {
-  state.hiddenReveal = !state.hiddenReveal;
+  state.hiddenOverride = !mvPlaceholdersOn();
   refreshAllMessageVersions();
 });
 

@@ -24,7 +24,8 @@ Bookmark fixes, message versions, editing, hiding and sticky notes.
   Edited, Prompt 1…).
 - **Hide Current Message:** hidden versions are skipped and listed at the end,
   with Restore. New Chat Settings toggle "Show hidden message placeholder" (on
-  by default), and a header eye that shows the placeholders for the open chat.
+  by default), and a header eye that starts at that setting and shows or hides
+  the placeholders for the open chat only, without changing the setting.
 - **Sticky Notes:** one note per message, with its own fixed id, title and rich
   text (links included). Header icon, bar and panel follow the bookmark rules.
   Advanced Search has a Sticky Notes text location and "Must Have Sticky Notes".
