@@ -303,7 +303,7 @@ print('SECOND_COPY_OK',flush=True)
             self.assertEqual(wait_job(self.db, body['job']['id'])['status'], 'completed')
         self.assertEqual(self.query('SELECT COUNT(*) FROM conversations')[0][0], 89)
         self.assertEqual(self.query('SELECT version FROM schema_version')[0][0], 6)
-        self.assertEqual(self.query('SELECT version FROM udb.schema_version')[0][0], 4)
+        self.assertEqual(self.query('SELECT version FROM udb.schema_version')[0][0], 5)
 
     def test_a_chat_deleted_between_batches_is_not_resurrected(self):
         self.new_export(45)
@@ -344,7 +344,7 @@ print('SECOND_COPY_OK',flush=True)
                 server.prepare_startup(db, fresh)
                 conn = server.open_db(db)
                 self.assertEqual(server.schema_changes.get_version(conn), 6)
-                self.assertEqual(server.schema_changes.get_version(conn, 'udb'), 4)
+                self.assertEqual(server.schema_changes.get_version(conn, 'udb'), 5)
                 conn.close()
                 jobs.cancel(db, receipt['id'])
             finally:

@@ -657,6 +657,11 @@ async function followInternalLink(target, { fromPad = false } = {}) {
     sp.returnTo = { padId: sp.current.id, title: spPadTitle(sp.current), scrollTop: spScroll.scrollTop };
     exitScratchWorkspace();
   }
+  // A link to one version of a message (a reroll, or the user's edit of
+  // one): the message opens showing that version.
+  state.pendingMessageVersion = seq != null && link.messageId
+    ? { seq: info.version?.seq ?? seq, id: link.messageId, index: info.version?.index, reply: !!info.version?.reply }
+    : null;
   await openConversation(link.conversationId, resolveConversationSidebarEl(link.conversationId), seq);
   spSyncReturnButton();
 }
@@ -817,6 +822,9 @@ const _spPopup = {
   range: null,
   selectedText: "",
   replace: null, // a link token whose destination is being changed
+  // Another editor using this popup (a sticky note): {editor, button,
+  // markdown(), insert(range, label, target), focus()}. null = the open pad.
+  host: null,
   options: [],
   active: -1,
   token: 0,
@@ -838,16 +846,28 @@ function spPlacePopup(popup, anchor) {
   popup.style.top = `${top}px`;
 }
 
-function openInsertLinkPopup(anchor, { replace = null } = {}) {
-  if (!sp.current) return;
-  spUseEditor();
+function spPopupMarkdown() {
+  return _spPopup.host ? _spPopup.host.markdown() : spMarkdown();
+}
+function spPopupButton() {
+  return _spPopup.host ? _spPopup.host.button : spLinkButton;
+}
+
+function openInsertLinkPopup(anchor, { replace = null, host = null } = {}) {
+  if (!host && !sp.current) return;
+  _spPopup.host = host;
+  if (host) _editor = host.editor;
+  else spUseEditor();
   // Keep the caret / selection from before focus moves into the popup.
+  const length = spPopupMarkdown().length;
   const range = replace
     ? { start: replace.sourceStart, end: replace.sourceEnd }
-    : (visualCommandRange() || { start: spMarkdown().length, end: spMarkdown().length });
+    : (visualCommandRange() || { start: length, end: length });
   _spPopup.range = range;
   _spPopup.replace = replace;
-  _spPopup.selectedText = replace ? "" : spSelectedText(range);
+  _spPopup.selectedText = replace || !range || range.start === range.end
+    ? ""
+    : spCore.visibleText(spPopupMarkdown(), range.start, range.end).replace(/\s+/g, " ").trim();
   _spPopup.open = true;
   hideLinkBubble();
   spPopupInput.value = "";
@@ -855,8 +875,10 @@ function openInsertLinkPopup(anchor, { replace = null } = {}) {
     ? "Choose a new destination. The link text stays the same."
     : (_spPopup.selectedText ? `The selected text “${_spPopup.selectedText}” becomes the link.` : "");
   spRenderOptions(spPopupOptions, [], spPopupInput);
+  // Advanced Search link picking returns to a pad, so only pads offer it.
+  $("scratchpad-link-advanced").hidden = !!host;
   spPopup.hidden = false;
-  spLinkButton.setAttribute("aria-expanded", "true");
+  spPopupButton().setAttribute("aria-expanded", "true");
   spPlacePopup(spPopup, anchor);
   spPopupInput.focus();
   document.addEventListener("mousedown", spPopupOutside, true);
@@ -868,8 +890,17 @@ function closeInsertLinkPopup(restoreFocus = true) {
   _spPopup.token += 1;
   clearTimeout(_spPopup.timer);
   spPopup.hidden = true;
-  spLinkButton.setAttribute("aria-expanded", "false");
+  spPopupButton().setAttribute("aria-expanded", "false");
   document.removeEventListener("mousedown", spPopupOutside, true);
+  const host = _spPopup.host;
+  if (host) {
+    if (restoreFocus) {
+      _editor = host.editor;
+      host.focus();
+      if (_spPopup.range) setVisualCaret(_spPopup.range.end, host.editor);
+    }
+    return;
+  }
   if (restoreFocus && scratchEditor.isOpen()) {
     // Cancel: the document is untouched; the caret goes back where it was.
     spUseEditor();
@@ -879,7 +910,7 @@ function closeInsertLinkPopup(restoreFocus = true) {
 }
 
 function spPopupOutside(event) {
-  if (!spPopup.contains(event.target) && !spLinkButton.contains(event.target)) closeInsertLinkPopup(false);
+  if (!spPopup.contains(event.target) && !spPopupButton().contains(event.target)) closeInsertLinkPopup(false);
 }
 
 // Options are {kind, title, detail, icon, run}. One listbox drawer serves the
@@ -962,8 +993,12 @@ function spOptionKeys(event, listbox, input) {
 }
 
 function spPickLink(label, target) {
-  const { range, selectedText, replace } = _spPopup;
+  const { range, selectedText, replace, host } = _spPopup;
   closeInsertLinkPopup(false);
+  if (host) {
+    host.insert(range, selectedText || label, target);
+    return;
+  }
   if (replace) {
     spUseEditor();
     spVisual.focus();
@@ -1461,6 +1496,9 @@ window.scratchPads = {
   open: openScratchPads,
   follow: followInternalLink,
   copyLink: copyInternalLink,
+  toast: showScratchToast,
+  // Insert Link for another visual editor (sticky notes). host: see _spPopup.
+  openLinkPopup: (anchor, host) => openInsertLinkPopup(anchor, { host }),
   addToPad: openScratchPadPicker,
   isLinkPicking: () => !!sp.linkMode,
 };

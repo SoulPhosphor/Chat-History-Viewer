@@ -52,7 +52,7 @@ All three file routes send `X-Content-Type-Options: nosniff`.
 | `/api/update/status` | — | `{current_version, backup}`: the installed version and the kept update backup (`null` if none). No network (#16) |
 | `/api/error-log` | — | `{groups: [...]}`: the 10 error groups that happened most recently, newest first, from `logs/errors.json` (#35) |
 | `/api/conversations` | `q, limit, offset, view, provider, pinned_first` | `{conversations: [...], total, ...}` |
-| `/api/conversation/<id>` | `limit, offset, target_seq` | `{conversation, messages, tags, mood_tags, labels, bookmarks, models, ...}` |
+| `/api/conversation/<id>` | `limit, offset, target_seq` | `{conversation, messages, tags, mood_tags, labels, bookmarks, models, message_edits, hidden_items, sticky_notes, ...}`. The last three cover the whole conversation, not just the page |
 | `/api/search` | `q, limit, provider` | `{results: [...]}` (never the Recycle Bin; one side when `provider` is given; renamed titles) |
 | `/api/search-in-conversation` | `conv_id, q` | `{matches: [...]}` |
 | `/api/gallery` | `provider, limit, offset` | `{sections: [...], unlinked_images, unlinked_total, offset, limit, next_offset}` (Media Hub) |
@@ -131,6 +131,9 @@ All three file routes send `X-Content-Type-Options: nosniff`.
 | `/api/recycle-bin/restore` **backup** | `{ids?: [...], all?}` | `{ok, restored}` |
 | `/api/recycle-bin/purge` **backup** | `{ids?: [...], all?}` | `{ok, purged}` |
 | `/api/bookmarks` | `{conversation_id, seq, name?, source?}` | `{ok, bookmark}` |
+| `/api/message-edits` | `{conversation_id, version_uuid, content}` | `{edit}`. One edit per message version: saving again changes the same edit (same id). The original is never changed |
+| `/api/hidden-messages` | `{conversation_id, item_id, hidden}` | `{ok, item_id, hidden}`. `item_id` is a version id or an edit id; only that item changes |
+| `/api/sticky-notes` | `{conversation_id, seq}` | `{note, created}`. One note per message: the message's existing note comes back with `created: false` |
 | `/api/advanced-search` | criteria | `{results, total, ...}` |
 | `/api/advanced-search/browse` | `{kind, id, provider, sort?, offset?, limit?, exclude_ids?}` | `{results, total, ...}` |
 | `/api/advanced-search/saved` | `{name, criteria}` | `{ok, saved}` |
@@ -154,6 +157,7 @@ All three file routes send `X-Content-Type-Options: nosniff`.
 | `/api/notes/<conv_id>` | `{user_notes?, notes_to_ai?, notes_from_ai?, base_version?}` | `{ok, version, ...}`; 409 if `base_version` is not the saved version |
 | `/api/bookmarks/<id>` | `{name}` | `{ok}` |
 | `/api/scratchpads/<id>` | `{title?, content?, base_version?}` | `{pad}` (`409` if `base_version` is stale) |
+| `/api/sticky-notes/<id>` | `{title?, body?, base_version?}` | `{note}` (`409` if `base_version` is stale; the id never changes) |
 
 ## Changing (DELETE)
 

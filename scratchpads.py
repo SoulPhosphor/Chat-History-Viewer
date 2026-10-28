@@ -20,6 +20,7 @@ import time
 import uuid
 
 import message_ids
+import message_versions
 from api_common import ApiError
 from query_rules import DISPLAY_TITLE, META_JOIN, NOT_DELETED
 from request_limits import check_text
@@ -277,6 +278,13 @@ def resolve_link(conn, conversation_id: str, seq=None, message_id: str = "") -> 
         # By the message's id; its old position is never a stand-in for a
         # message that is gone (message_ids.locate).
         current = message_ids.locate(conn, conversation_id, message_id or None, seq)
+        if current is None and message_id:
+            # A link to one version of a message (a reroll) or to the user's
+            # edit of one: open that message showing that version.
+            found = message_versions.locate_item(conn, conversation_id, message_id)
+            if found:
+                current = found["seq"]
+                out["version"] = found
         out["message_exists"] = current is not None
         if current is not None:
             seq = current

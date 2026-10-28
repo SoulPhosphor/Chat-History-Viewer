@@ -12,6 +12,7 @@ from pathlib import Path
 # HTTP/routing shell; these modules own the SQL, validation, and transactions
 # and raise ApiError for error responses.
 import labels, bulk_labels, snapshots, gizmos, updater, advanced_search, related, scratchpads, message_ids
+import message_versions
 import app_paths, schema_changes, errorlog, backups, request_limits
 from request_limits import FIELD_LIMITS, check_text
 from api_common import ApiError
@@ -47,7 +48,7 @@ def _code_signature() -> str:
                  "updater.py", "advanced_search.py", "related.py", "scratchpads.py",
                  "message_ids.py", "app_paths.py", "errorlog.py", "backups.py", "request_limits.py",
                  "schema_changes.py", "version.py", "query_rules.py", "conversation_tables.py",
-                 "tag_ids.py", "background_jobs.py", "import_lock.py"):
+                 "tag_ids.py", "background_jobs.py", "import_lock.py", "message_versions.py"):
         try:
             h.update((here / name).read_bytes())
         except OSError:
@@ -68,7 +69,8 @@ def _static_signature() -> str:
                  "labels_screen.js", "bulk_labels.js", "snapshots.js",
                  "gizmos.js", "bookmarks.js", "bookmarks_hub.js", "notes.js",
                  "summary.js", "summary_editor_core.js", "related.js",
-                 "internal_links.js", "scratchpads.js", "scratchpads.css"):
+                 "internal_links.js", "scratchpads.js", "scratchpads.css",
+                 "message_versions.js", "sticky_notes.js"):
         try:
             h.update((static_dir / name).read_bytes())
         except OSError:
@@ -580,12 +582,19 @@ def _userdata_change_4_model_ids(conn) -> None:
         conn.execute("UPDATE conversation_models SET model_id = ? WHERE model_id = ?", (model_id, old))
 
 
+def _userdata_change_5_message_versions(conn) -> None:
+    """The user's edits of messages, hidden message versions and sticky
+    notes, each keyed by fixed ids (message_versions.py)."""
+    message_versions.create_tables(conn)
+
+
 # userdata.db change steps, in order. Append new steps; never edit shipped ones.
 USERDATA_SCHEMA_STEPS = [
     _userdata_change_1_added_columns,
     _userdata_change_2_tag_ids,
     _userdata_change_3_note_versions,
     _userdata_change_4_model_ids,
+    _userdata_change_5_message_versions,
 ]
 
 
@@ -1997,6 +2006,15 @@ class Handler(BaseHTTPRequestHandler):
             self._api_review_import()
         elif path == "/api/bookmarks":
             self._api_bookmark_create()
+        elif path == "/api/message-edits":
+            payload = self._read_json_body()
+            self._handle_db(lambda conn: message_versions.save_edit(conn, payload))
+        elif path == "/api/hidden-messages":
+            payload = self._read_json_body()
+            self._handle_db(lambda conn: message_versions.set_hidden(conn, payload))
+        elif path == "/api/sticky-notes":
+            payload = self._read_json_body()
+            self._handle_db(lambda conn: message_versions.create_note(conn, payload))
         elif path == "/api/advanced-search":
             payload = self._read_json_body()
             self._handle_db(lambda conn: advanced_search.search(conn, payload))
@@ -2045,6 +2063,10 @@ class Handler(BaseHTTPRequestHandler):
             self._api_notes_update(urllib.parse.unquote(path[len("/api/notes/"):]))
         elif path.startswith("/api/bookmarks/"):
             self._api_bookmark_update(urllib.parse.unquote(path[len("/api/bookmarks/"):]))
+        elif path.startswith("/api/sticky-notes/"):
+            note_id = urllib.parse.unquote(path[len("/api/sticky-notes/"):])
+            payload = self._read_json_body()
+            self._handle_db(lambda conn: message_versions.update_note(conn, note_id, payload))
         elif path.startswith("/api/scratchpads/"):
             pad_id = urllib.parse.unquote(path[len("/api/scratchpads/"):])
             payload = self._read_json_body()
@@ -3068,7 +3090,8 @@ class Handler(BaseHTTPRequestHandler):
                             "models": models,
                             "tags": self._conv_tags(conn, conv_id),
                             "mood_tags": self._conv_mood_tags(conn, conv_id),
-                            "bookmarks": self._conv_bookmarks(conn, conv_id)})
+                            "bookmarks": self._conv_bookmarks(conn, conv_id),
+                            **message_versions.conversation_extras(conn, conv_id)})
         finally:
             conn.close()
 

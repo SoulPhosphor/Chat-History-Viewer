@@ -26,7 +26,7 @@ from pathlib import Path
 
 # Part of the "files already checked" marker: bump it whenever the way ids are
 # read from a backup changes, so older databases get one fresh pass.
-BACKFILL_VERSION = 2
+BACKFILL_VERSION = 3
 
 
 def message_seq(conn, conversation_id: str, message_uuid: str):
@@ -220,7 +220,8 @@ def bookmark_missing(conn, conversation_id: str, bookmark) -> bool:
 
 
 def fill_missing_from_sources(db_path: Path, source_dir: Path) -> int:
-    """Give messages imported before ids were kept their export ids.
+    """Give messages imported before ids were kept their export ids, and each
+    saved version (reroll) of a message its own export id.
 
     Reads the backups in `source_dir` and matches each message on conversation,
     provider, position, role and exact text, so a message whose text differs
@@ -237,6 +238,7 @@ def fill_missing_from_sources(db_path: Path, source_dir: Path) -> int:
             ).fetchone()[0]
         except sqlite3.Error:
             return 0
+        missing += _siblings_without_ids(conn)
         if not missing:
             return 0
         paths = [
@@ -320,6 +322,7 @@ def fill_missing_from_sources(db_path: Path, source_dir: Path) -> int:
                       m.get("seq"), m.get("role"), m.get("content"))
                      for m in record.get("msgs") or [] if m.get("message_uuid")],
                 )
+                _fill_sibling_ids(conn, provider, record.get("msgs") or [])
             conn.commit()
             filled += conn.total_changes - before
         if failed:
@@ -335,6 +338,50 @@ def fill_missing_from_sources(db_path: Path, source_dir: Path) -> int:
     finally:
         conn.close()
     return filled
+
+
+def _strip_ids(siblings):
+    return [{k: v for k, v in sib.items() if k not in ("uuid", "asst_uuid")}
+            for sib in siblings if isinstance(sib, dict)]
+
+
+def _siblings_without_ids(conn) -> int:
+    """How many messages carry versions saved before each kept its own id."""
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE siblings IS NOT NULL "
+            "AND siblings NOT LIKE '%\"uuid\"%'"
+        ).fetchone()[0]
+    except sqlite3.Error:
+        return 0
+
+
+def _fill_sibling_ids(conn, provider, msgs) -> None:
+    """Give each saved version (reroll) of a message the export's id for it.
+    Only when the stored versions match the backup's exactly, apart from the
+    ids, so a version never gets another version's id."""
+    for m in msgs:
+        raw = m.get("siblings")
+        if not raw:
+            continue
+        row = conn.execute(
+            "SELECT id, siblings FROM messages WHERE conversation_id = ? AND seq = ? "
+            "AND role = ? AND content = ? AND siblings IS NOT NULL "
+            "AND siblings NOT LIKE '%\"uuid\"%' "
+            "AND conversation_id IN (SELECT id FROM conversations WHERE provider = ?)",
+            (m["conversation_id"], m.get("seq"), m.get("role"), m.get("content"), provider),
+        ).fetchone()
+        if not row:
+            continue
+        try:
+            stored, fresh = json.loads(row[1]), json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(stored, list) or not isinstance(fresh, list):
+            continue
+        if _strip_ids(stored) != _strip_ids(fresh):
+            continue
+        conn.execute("UPDATE messages SET siblings = ? WHERE id = ?", (raw, row[0]))
 
 
 # ── Bookmarks made before message ids were kept ───────────────────────────────

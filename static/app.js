@@ -54,6 +54,7 @@ const state = {
     // state only applies when the user has not chosen otherwise (the loaded
     // preference overwrites these on startup, and the choice persists).
     showChatSnippet: false,
+    showHiddenPlaceholders: true,
     showHeaderLabels: false,
   },
   labelRows: [], // label definitions (shared by the Labels screen and squares)
@@ -1907,6 +1908,7 @@ async function loadUiPreferences() {
   state.preferences.showSummaryAuthor = Boolean(p.showSummaryAuthor);
   state.preferences.autoOpenNotesPanel = Boolean(p.autoOpenNotesPanel);
   state.preferences.showChatSnippet = Boolean(p.showChatSnippet);
+  state.preferences.showHiddenPlaceholders = p.showHiddenPlaceholders !== false;
   state.preferences.showHeaderLabels = Boolean(p.showHeaderLabels);
   state.scrollByConversation =
     p.scrollByConversation && typeof p.scrollByConversation === "object"
@@ -1978,6 +1980,7 @@ async function leaveNotesForSpecialView() {
   // Every special view comes through here, so leaving Scratch Pads (and its
   // unsaved-changes check) happens here too.
   if (typeof scratchPadNavigationGuard === "function" && !(await scratchPadNavigationGuard())) return false;
+  if (!(await chatDraftsNavigationGuard())) return false;
   if (typeof notesNavigationGuard !== "function") return true;
   return notesNavigationGuard({ endVisit: true });
 }
@@ -2460,6 +2463,24 @@ const EMPTY_CONV_NOTICE = {
   default: "This conversation has no displayable messages.",
 };
 
+// One message's text as shown in the chat: Markdown, code copy buttons, and
+// math with KaTeX if available. Also used when a message switches version.
+function renderMessageBody(bodyEl, content) {
+  bodyEl.innerHTML = md(sanitize(content || ""));
+  wireCodeCopy(bodyEl);
+  if (typeof renderMathInElement === "function") {
+    renderMathInElement(bodyEl, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "\\[", right: "\\]", display: true },
+        { left: "$", right: "$", display: false },
+        { left: "\\(", right: "\\)", display: false },
+      ],
+      throwOnError: false,
+    });
+  }
+}
+
 // Keep existing message rendering (branches, files, math, bookmarks) shared
 // between initial opening and subsequent pages.
 function renderConversationMessages(messages, conv, artifactsMeta) {
@@ -2489,21 +2510,7 @@ function renderConversationMessages(messages, conv, artifactsMeta) {
 
     const bodyEl = document.createElement("div");
     bodyEl.className = "message-body";
-    bodyEl.innerHTML = md(sanitize(msg.content || ""));
-    wireCodeCopy(bodyEl);
-
-    // Render math with KaTeX if available
-    if (typeof renderMathInElement === "function") {
-      renderMathInElement(bodyEl, {
-        delimiters: [
-          { left: "$$", right: "$$", display: true },
-          { left: "\\[", right: "\\]", display: true },
-          { left: "$", right: "$", display: false },
-          { left: "\\(", right: "\\)", display: false },
-        ],
-        throwOnError: false,
-      });
-    }
+    renderMessageBody(bodyEl, msg.content);
 
     const roleEl = document.createElement("div");
     roleEl.className = "message-role";
@@ -2549,137 +2556,20 @@ function renderConversationMessages(messages, conv, artifactsMeta) {
       if (artChips) div.appendChild(artChips);
     }
 
-    // ── Branch / retry navigation (← N/M →) ─────────────────────────────────
-    if (msg.siblings?.length > 1) {
-      const total = msg.siblings.length;
-      let curIdx = Math.max(
-        0,
-        Math.min((msg.branch_index || total) - 1, total - 1),
-      );
-      // Save original active branch so we can restore downstream visibility
-      div._origBranchIdx = curIdx;
-
-      const navEl = document.createElement("div");
-      navEl.className = "branch-nav";
-
-      const prevBtn = document.createElement("button");
-      prevBtn.className = "branch-btn";
-      prevBtn.type = "button";
-      prevBtn.title = "Previous version";
-      prevBtn.textContent = "←";
-
-      const counterEl = document.createElement("span");
-      counterEl.className = "branch-counter";
-      counterEl.textContent = `${curIdx + 1} / ${total}`;
-
-      const nextBtn = document.createElement("button");
-      nextBtn.className = "branch-btn";
-      nextBtn.type = "button";
-      nextBtn.title = "Next version";
-      nextBtn.textContent = "→";
-
-      const updateBranch = (newIdx) => {
-        curIdx = ((newIdx % total) + total) % total;
-        counterEl.textContent = `${curIdx + 1} / ${total}`;
-        const sib = msg.siblings[curIdx];
-
-        // Update this user message bubble
-        bodyEl.innerHTML = md(sanitize(sib.content || ""));
-        wireCodeCopy(bodyEl);
-
-        // Update the adjacent assistant response (for user-branch switching)
-        if ("asst_content" in sib) {
-          const nextMsgEl = div.nextElementSibling;
-          if (nextMsgEl?.classList.contains("assistant")) {
-            const nextBody = nextMsgEl.querySelector(".message-body");
-            if (nextBody) {
-              const ac = sib.asst_content || "";
-              nextBody.innerHTML = ac
-                ? md(sanitize(ac))
-                : '<p class="branch-no-response">(Claude did not respond in this branch)</p>';
-              wireCodeCopy(nextBody);
-            }
-            // Update assistant artifact chips when user branch changes
-            const newArtIds = sib.asst_artifact_ids || [];
-            let existingArtChips = nextMsgEl.querySelector(".artifact-chips");
-            if (newArtIds.length) {
-              const newArtChips = createArtifactChips(newArtIds, artifactsMeta);
-              if (existingArtChips && newArtChips)
-                existingArtChips.replaceWith(newArtChips);
-              else if (newArtChips) nextMsgEl.appendChild(newArtChips);
-            } else if (existingArtChips) {
-              existingArtChips.remove();
-            }
-          }
-        }
-
-        // For assistant-branch switching: update artifact chips on this div
-        if (msg.role === "assistant") {
-          const newArtIds = sib.artifact_ids || [];
-          let existingArtChips = div.querySelector(".artifact-chips");
-          if (newArtIds.length) {
-            const newArtChips = createArtifactChips(newArtIds, artifactsMeta);
-            if (existingArtChips && newArtChips)
-              existingArtChips.replaceWith(newArtChips);
-            else if (newArtChips) div.insertBefore(newArtChips, navEl);
-          } else if (existingArtChips) {
-            existingArtChips.remove();
-          }
-        }
-
-        // Show downstream messages only when on the original active branch
-        div._toggleDownstream?.(curIdx === div._origBranchIdx);
-
-        // Update chips for user message branches
-        if (msg.role === "user") {
-          const newAtts = sib.attachments || [];
-          if (chipsEl) {
-            if (newAtts.length) {
-              const newChips = createChipsEl(newAtts);
-              chipsEl.replaceWith(newChips);
-              chipsEl = newChips;
-            } else {
-              chipsEl.remove();
-              chipsEl = null;
-            }
-          } else if (newAtts.length) {
-            chipsEl = createChipsEl(newAtts);
-            div.insertBefore(chipsEl, bodyEl);
-          }
-        }
-        prevBtn.disabled = curIdx === 0;
-        nextBtn.disabled = curIdx === total - 1;
-      };
-
-      prevBtn.addEventListener("click", () => updateBranch(curIdx - 1));
-      nextBtn.addEventListener("click", () => updateBranch(curIdx + 1));
-      prevBtn.disabled = curIdx === 0;
-      nextBtn.disabled = curIdx === total - 1;
-
-      navEl.append(prevBtn, counterEl, nextBtn);
-      div.appendChild(navEl);
+    // ── Versions: rerolls, the user's edit, hidden versions, ⋮ menu ─────────
+    // message_versions.js draws the version switcher under the message and
+    // swaps the body, chips and the following reply when it changes.
+    if (typeof decorateMessageVersions === "function") {
+      decorateMessageVersions({ div, msg, bodyEl, roleEl, nameEl, metaRow, artifactsMeta });
+    }
+    if (msg.seq != null && typeof decorateMessageStickyNote === "function") {
+      decorateMessageStickyNote({ div, metaRow, seq: msg.seq });
     }
 
     messagesEl.appendChild(div);
   }
 
-  // Post-process: wire each branched USER div to hide/show its downstream messages.
-  // Assistant branches only swap content — they never hide downstream.
-  {
-    const allDivs = Array.from(messagesEl.querySelectorAll(":scope > .message"));
-    for (let i = 0; i < allDivs.length; i++) {
-      const d = allDivs[i];
-      if (d._origBranchIdx === undefined) continue;
-      if (!d.classList.contains("user")) continue; // assistant branches: skip
-      // Downstream = every sibling div after the immediate next assistant (i+2 onward)
-      d._toggleDownstream = (show) => {
-        const current = Array.from(messagesEl.querySelectorAll(":scope > .message"));
-        current.slice(current.indexOf(d) + 2).forEach((el) => {
-          el.classList.toggle("branch-hidden", !show);
-        });
-      };
-    }
-  }
+  if (typeof finishMessageVersions === "function") finishMessageVersions();
 
 }
 
@@ -2714,6 +2604,7 @@ function renderConversationPager() {
 
 let conversationPageRequest = 0;
 async function showConversationPage(params) {
+  if (!(await chatDraftsNavigationGuard())) return false;
   const request = ++conversationPageRequest;
   const id = state.activeId;
   const data = await apiConversation(id, params);
@@ -2728,6 +2619,14 @@ async function showConversationPage(params) {
   return true;
 }
 
+// Unsaved sticky note text and message edits sit in the chat itself, so
+// anything that replaces the chat's messages asks about them first.
+async function chatDraftsNavigationGuard() {
+  if (typeof stickyNotesNavigationGuard === "function" && !(await stickyNotesNavigationGuard())) return false;
+  if (typeof messageEditsNavigationGuard === "function" && !(await messageEditsNavigationGuard())) return false;
+  return true;
+}
+
 async function ensureConversationMessage(seq) {
   if (messagesEl.querySelector(`[data-seq="${seq}"]`)) return true;
   return showConversationPage({ target_seq: seq });
@@ -2738,6 +2637,7 @@ async function openConversation(id, clickedEl, targetSeq = null, { keepAdvancedS
   // Advanced Search picks a link for a Scratch Pad stays inside that workspace.
   if (typeof scratchPadNavigationGuard === "function" &&
       !(await scratchPadNavigationGuard({ preview: keepAdvancedSearch }))) return;
+  if (!(await chatDraftsNavigationGuard())) return;
   if (typeof summaryHasUnsavedChanges === "function" && summaryHasUnsavedChanges()) {
     const r = await openSummaryUnsavedModal();
     if (r === "cancel") return;
@@ -2801,6 +2701,8 @@ async function openConversation(id, clickedEl, targetSeq = null, { keepAdvancedS
   if (typeof resetBookmarksForConversation === "function") {
     resetBookmarksForConversation(data.bookmarks || []);
   }
+  if (typeof resetMessageVersionsForConversation === "function") resetMessageVersionsForConversation(data);
+  if (typeof resetStickyNotesForConversation === "function") resetStickyNotesForConversation(data.sticky_notes || []);
   state.activeLabels = conv.labels || [];
   renderHeaderLabel(conv.id, state.activeLabels);
   const ts = formatDate(conv.update_time || conv.create_time);
@@ -4778,6 +4680,10 @@ async function openSettings() {
   if (chatSnippetToggle) {
     chatSnippetToggle.checked = state.preferences.showChatSnippet;
   }
+  const hiddenPlaceholdersToggle = $("setting-hidden-placeholders");
+  if (hiddenPlaceholdersToggle) {
+    hiddenPlaceholdersToggle.checked = state.preferences.showHiddenPlaceholders;
+  }
   applySidebarWidth(state.preferences.sidebarWidth);
 }
 
@@ -5106,6 +5012,10 @@ $("setting-summary-author")?.addEventListener("change", (e) => {
 });
 $("setting-auto-notes-panel")?.addEventListener("change", (e) => {
   saveUiPreferences({ autoOpenNotesPanel: e.target.checked });
+});
+$("setting-hidden-placeholders")?.addEventListener("change", (e) => {
+  saveUiPreferences({ showHiddenPlaceholders: e.target.checked });
+  if (typeof refreshAllMessageVersions === "function") refreshAllMessageVersions();
 });
 $("setting-chat-snippet")?.addEventListener("change", (e) => {
   saveUiPreferences({ showChatSnippet: e.target.checked });

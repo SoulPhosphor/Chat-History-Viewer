@@ -74,6 +74,23 @@
           <div class="bookmark-panel-title">Bookmarks</div>
           <div class="bookmark-panel-list" id="bookmark-panel-list"></div>
         </div>
+        <!-- Temporary sticky note panel (shown for 5+ sticky notes), like the
+             bookmark panel. Not remembered across sessions. -->
+        <div id="sticky-panel" class="bookmark-panel" hidden>
+          <div class="bookmark-panel-top">
+            <button
+              id="sticky-panel-close"
+              class="bookmark-panel-close"
+              type="button"
+              title="Close sticky notes"
+              aria-label="Close sticky notes"
+            >
+              ✕
+            </button>
+          </div>
+          <div class="bookmark-panel-title">Sticky Notes</div>
+          <div class="bookmark-panel-list" id="sticky-panel-list"></div>
+        </div>
         <!-- Editable conversation Notes temporarily replace the normal sidebar.
              The opening-state baselines live in notes.js for the current visit. -->
         <div id="notes-side-panel" class="notes-side-panel" hidden>
@@ -559,6 +576,16 @@
               <span id="scratchpad-return-label">Back to Scratch Pad</span>
             </button>
             <span id="thread-titlebar-label" role="heading" aria-level="1"></span>
+            <!-- Shown while the chat has hidden messages: shows or hides their
+                 placeholders. Icon drawn by message_versions.js. -->
+            <button
+              id="hidden-messages-toggle-btn"
+              type="button"
+              title="Show hidden message placeholders"
+              aria-label="Show hidden message placeholders"
+              aria-pressed="false"
+              hidden
+            ></button>
             <button
               id="related-toggle-btn"
               type="button"
@@ -599,6 +626,18 @@
               <!-- Google Material Symbols: left_panel_close -->
               <svg class="notes-side-toggle-icon" id="notes-side-icon-close" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true" hidden>
                 <path d="M120-120v-720h720v720H120Zm240-80h400v-560H360v560Zm-160 0h80v-560h-80v560Zm0-560v560-560Zm360 440 56-56-64-64h108v-80H552l64-64-56-56-160 160 160 160Z"/>
+              </svg>
+            </button>
+            <button
+              id="sticky-notes-toggle-btn"
+              type="button"
+              title="Sticky Notes"
+              aria-label="Show sticky notes"
+              hidden
+            >
+              <!-- Google Material Symbols: comment_bank (opens the sticky note list) -->
+              <svg class="bookmark-nav-icon" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true">
+                <path d="M500-520v-280H160v525l46-45h594v-480H700v280l-100-60-100 60ZM80-80v-720q0-33 23.5-56.5T160-880h640q33 0 56.5 23.5T880-800v480q0 33-23.5 56.5T800-240H240L80-80Zm80-720v480-480Z"/>
               </svg>
             </button>
             <button
@@ -746,6 +785,19 @@
               type="button"
               title="Close bookmarks"
               aria-label="Close bookmarks"
+            >
+              ✕
+            </button>
+          </div>
+          <!-- Compact sticky note bar (2–4 sticky notes), like the bookmark bar. -->
+          <div id="sticky-bar" class="bookmark-bar" hidden>
+            <div class="bookmark-bar-links" id="sticky-bar-links"></div>
+            <button
+              id="sticky-bar-close"
+              class="bookmark-bar-close"
+              type="button"
+              title="Close sticky notes"
+              aria-label="Close sticky notes"
             >
               ✕
             </button>
@@ -1032,13 +1084,15 @@
                     Review previously deleted chats before re-importing.
                   </option>
                 </select>
-                <label
-                  id="import-review-new-wrap"
-                  class="import-deleted-checkbox"
-                >
-                  <input type="checkbox" id="import-review-new" />
-                  Review deleted conversations that have new messages
-                </label>
+                <div id="import-review-new-wrap" class="import-deleted-checkbox">
+                  <label class="settings-switch">
+                    <input type="checkbox" role="switch" id="import-review-new" aria-labelledby="import-review-new-label" />
+                    <span class="settings-switch-track" aria-hidden="true">
+                      <span class="settings-switch-thumb"></span>
+                    </span>
+                  </label>
+                  <label id="import-review-new-label" for="import-review-new">Review deleted conversations that have new messages</label>
+                </div>
               </div>
               <div class="import-review-controls">
                 <button id="import-new-btn" type="button">
@@ -1188,6 +1242,22 @@
                 </div>
                 <label class="settings-switch">
                   <input type="checkbox" role="switch" id="setting-summary-hints" checked />
+                  <span class="settings-switch-track" aria-hidden="true">
+                    <span class="settings-switch-thumb"></span>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <section class="settings-section">
+              <h3 class="settings-section-title">Chat Settings</h3>
+              <div class="settings-setting">
+                <div class="settings-setting-text">
+                  <label class="settings-setting-title" for="setting-hidden-placeholders">Show hidden message placeholder</label>
+                  <p class="settings-setting-subtext">Hidden messages leave a small Hidden marker in the chat. Off, hidden messages don't appear at all.</p>
+                </div>
+                <label class="settings-switch">
+                  <input type="checkbox" role="switch" id="setting-hidden-placeholders" checked />
                   <span class="settings-switch-track" aria-hidden="true">
                     <span class="settings-switch-thumb"></span>
                   </span>
@@ -1939,10 +2009,12 @@
     <script src="/static/summary.js"></script>
     <script src="/static/notes.js"></script>
     <script src="/static/bookmarks.js"></script>
+    <script src="/static/message_versions.js"></script>
     <script src="/static/bookmarks_hub.js"></script>
     <script src="/static/advanced_search.js"></script>
     <script src="/static/related.js"></script>
     <script src="/static/scratchpads.js"></script>
+    <script src="/static/sticky_notes.js"></script>
     <script src="/static/vendor/katex/katex.min.js"></script>
     <script src="/static/vendor/katex/contrib/auto-render.min.js"></script>
   </body>

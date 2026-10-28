@@ -3,6 +3,35 @@
 The version number lives in `version.py`. Each release adds an entry here,
 newest first.
 
+## 1.10.0 — 2026-10-28
+
+Bookmark fixes, message versions, editing, hiding and sticky notes.
+
+- **Bookmarks:** the header bookmark icon no longer shows when a chat has no
+  bookmarks. A new bookmark is named in a field with a Save button in line
+  with its icon, instead of a popup.
+- **Import:** "Review deleted conversations that have new messages" is a toggle
+  (off by default).
+- **Every reroll has a fixed id.** Each saved version of a message keeps the
+  export's own id. Chats imported before this get the ids from the backups in
+  `source/` at start-up; no re-import needed.
+- **Message ⋮ menu:** Create Sticky Note, Copy Message Link, Copy Message, Edit
+  Message, Hide Current Message. Links can point at one version or one edit.
+- **Edit Message:** one edit per version, saved only with Save. The original is
+  always kept, and a re-import never replaces an edit.
+- **Version switcher** under each message, right aligned, with `<` and `>`.
+  Once a message has an edit it names the version (Original, Edited, Response 2
+  Edited, Prompt 1…).
+- **Hide Current Message:** hidden versions are skipped and listed at the end,
+  with Restore. New Chat Settings toggle "Show hidden message placeholder" (on
+  by default), and a header eye that starts at that setting and shows or hides
+  the placeholders for the open chat only, without changing the setting.
+- **Sticky Notes:** one note per message, with its own fixed id, title and rich
+  text (links included). Header icon, bar and panel follow the bookmark rules.
+  Advanced Search has a Sticky Notes text location and "Must Have Sticky Notes".
+- Database: userdata change 5 adds `message_edits`, `hidden_messages` and
+  `sticky_notes` (backed up automatically before it runs).
+
 ## 1.9.0 — 2026-10-20
 
 Repair session 10 from `AUDIT.md` (Phase 6: #32, #38, #17, #19, #36, #37).

@@ -37,6 +37,7 @@
     ["notes_to_ai", "Notes to AI"],
     ["notes_from_ai", "Notes from AI"],
     ["bookmarks", "Bookmarks"],
+    ["sticky_notes", "Sticky Notes"],
   ];
 
   // Date choices, as in the concept design. The day counts are relative to
@@ -518,7 +519,7 @@
     const other = makeGroup("Other");
     const grid = document.createElement("div");
     grid.className = "advanced-checkbox-grid";
-    for (const [value, label] of [["summary", "Must Have Summary"], ["notes", "Must Have Notes"], ["bookmarks", "Must Have Bookmarks"], ["attachments", "Must Have Attachments"]]) {
+    for (const [value, label] of [["summary", "Must Have Summary"], ["notes", "Must Have Notes"], ["bookmarks", "Must Have Bookmarks"], ["sticky_notes", "Must Have Sticky Notes"], ["attachments", "Must Have Attachments"]]) {
       const row = document.createElement("label");
       const input = document.createElement("input");
       input.type = "checkbox";

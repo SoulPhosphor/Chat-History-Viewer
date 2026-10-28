@@ -77,6 +77,12 @@ TEXT_SOURCES = {
         "SELECT conversation_id, 'bookmarks' AS source, COALESCE(name, '') AS text, seq "
         "FROM udb.conversation_bookmarks WHERE conversation_id" + _IN_SCOPE,
     ),
+    "sticky_notes": (
+        "Sticky Note",
+        "SELECT conversation_id, 'sticky_notes' AS source, "
+        "COALESCE(title, '') || char(10) || COALESCE(body, '') AS text, seq "
+        "FROM udb.sticky_notes WHERE conversation_id" + _IN_SCOPE,
+    ),
 }
 
 
@@ -329,6 +335,8 @@ def _base_rows(conn, criteria: dict) -> list[dict]:
         )
     if "bookmarks" in must_have:
         where.append("EXISTS (SELECT 1 FROM udb.conversation_bookmarks ahb WHERE ahb.conversation_id=c.id)")
+    if "sticky_notes" in must_have:
+        where.append("EXISTS (SELECT 1 FROM udb.sticky_notes ahsn WHERE ahsn.conversation_id=c.id)")
     if "attachments" in must_have:
         where.append(
             "EXISTS (SELECT 1 FROM messages aha WHERE aha.conversation_id=c.id "
