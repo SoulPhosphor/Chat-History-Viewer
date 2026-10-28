@@ -2,7 +2,8 @@
 
 A snapshot captures everything the user added (labels, folders, tags, mood
 tags, titles, archive/delete state, pins, bookmarks, notes, summaries, Scratch
-Pads, related links and model tags) — never message content. They are created
+Pads, related links, model tags, message edits, hidden messages and sticky
+notes) — never message content. They are created
 only by an explicit button press (never automatically), capped at
 ``SNAPSHOT_MAX``, and deleted only by the user. Restore is transactional and
 skips — rather than inventing — conversations a snapshot references that no
@@ -24,10 +25,11 @@ from request_limits import SNAPSHOT_NAME_MAX, check_text
 
 import tag_ids
 
-# 2 added the TABLE_CATEGORIES below (AUDIT.md #19). A version 1 snapshot
-# still restores the categories it has.
-SNAPSHOT_SCHEMA_VERSION = 2
-READABLE_VERSIONS = (1, 2)
+# 2 added the TABLE_CATEGORIES below (AUDIT.md #19); 3 added message edits,
+# hidden messages and sticky notes. An older snapshot still restores the
+# categories it has.
+SNAPSHOT_SCHEMA_VERSION = 3
+READABLE_VERSIONS = (1, 2, 3)
 SNAPSHOT_MAX = 10
 
 # Categories kept as whole tables: key -> (udb table, its conversation
@@ -41,6 +43,9 @@ TABLE_CATEGORIES = {
     "links": ("conversation_links", ("conversation_a", "conversation_b")),
     "model_tags": ("conversation_models", ("conversation_id",)),
     "scratch_pads": ("scratch_pads", ()),
+    "message_edits": ("message_edits", ("conversation_id",)),
+    "hidden_messages": ("hidden_messages", ("conversation_id",)),
+    "sticky_notes": ("sticky_notes", ("conversation_id",)),
 }
 
 # The restorable categories, in display order, with human-readable names.
@@ -58,6 +63,9 @@ SNAPSHOT_CATEGORIES = [
     ("links", "Related links"),
     ("model_tags", "Model tags"),
     ("scratch_pads", "Scratch Pads"),
+    ("message_edits", "Message edits"),
+    ("hidden_messages", "Hidden messages"),
+    ("sticky_notes", "Sticky notes"),
 ]
 
 

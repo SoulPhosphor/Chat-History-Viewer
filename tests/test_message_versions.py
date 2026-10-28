@@ -184,6 +184,32 @@ class MessageVersionTests(unittest.TestCase):
         must = advanced_search.search(self.conn, {"query": "", "must_have": ["sticky_notes"]})
         self.assertEqual([r["id"] for r in must["results"]], ["c1"])
 
+    def test_delete_sticky_note(self):
+        note = message_versions.create_note(self.conn, {"conversation_id": "c1", "seq": 1})["note"]
+        message_versions.delete_note(self.conn, note["id"])
+        self.assertEqual(message_versions.conversation_notes(self.conn, "c1"), [])
+        with self.assertRaises(ApiError) as caught:
+            message_versions.delete_note(self.conn, note["id"])
+        self.assertEqual(caught.exception.status, 404)
+
+    def test_snapshots_keep_edits_hidden_messages_and_sticky_notes(self):
+        import snapshots
+        edit = message_versions.save_edit(self.conn, {
+            "conversation_id": "c1", "version_uuid": "a0a", "content": "Edited"})["edit"]
+        message_versions.set_hidden(self.conn, {"conversation_id": "c1", "item_id": "a0b", "hidden": True})
+        note = message_versions.create_note(self.conn, {"conversation_id": "c1", "seq": 1})["note"]
+        sid = snapshots.snapshot_create(self.conn, {"name": "Before"})["snapshots"][0]["id"]
+        message_versions.save_edit(self.conn, {"conversation_id": "c1", "version_uuid": "a0a", "content": "Later"})
+        message_versions.set_hidden(self.conn, {"conversation_id": "c1", "item_id": "a0b", "hidden": False})
+        message_versions.delete_note(self.conn, note["id"])
+        result = snapshots.snapshot_restore(self.conn, sid, {})
+        for key in ("message_edits", "hidden_messages", "sticky_notes"):
+            self.assertIn(key, result["restored"])
+        extras = message_versions.conversation_extras(self.conn, "c1")
+        self.assertEqual([(e["id"], e["content"]) for e in extras["message_edits"]], [(edit["id"], "Edited")])
+        self.assertEqual(extras["hidden_items"], ["a0b"])
+        self.assertEqual([n["id"] for n in extras["sticky_notes"]], [note["id"]])
+
     def test_permanent_delete_removes_them(self):
         for table in ("message_edits", "hidden_messages", "sticky_notes"):
             self.assertIn((table, "conversation_id", None), conversation_tables.USERDATA_TABLES)

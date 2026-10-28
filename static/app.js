@@ -6214,7 +6214,7 @@ function setThreadTitle(text) {
   if (relatedToggleBtn) relatedToggleBtn.hidden = !text;
   const convLinkBtn = $("conv-link-btn");
   if (convLinkBtn) convLinkBtn.hidden = !text;
-  updateSummaryToggleIcon(false);
+  if (typeof updateSummaryToggleIcon === "function") updateSummaryToggleIcon(false);
   if (typeof updateNotesScreenIcon === "function") updateNotesScreenIcon(false);
   if (typeof updateNotesSideIcon === "function") {
     updateNotesSideIcon(typeof notesSidePanelIsOpen === "function" && notesSidePanelIsOpen());
@@ -7259,7 +7259,14 @@ async function initApp() {
   }
 }
 
-initApp();
+// Start once every script on the page has run: summary.js, bookmarks.js,
+// message_versions.js and the rest load after this file, and opening the
+// last conversation calls into them.
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => initApp(), { once: true });
+} else {
+  initApp();
+}
 
 messagesEl?.addEventListener("scroll", () => {
   if (!state.activeId) return;

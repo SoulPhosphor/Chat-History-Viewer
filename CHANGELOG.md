@@ -3,6 +3,18 @@
 The version number lives in `version.py`. Each release adds an entry here,
 newest first.
 
+## 1.10.1 — 2026-10-28
+
+- **Snapshots** now keep message edits, hidden messages and sticky notes, and
+  restore them. Older snapshots restore only the categories they hold.
+- **Sticky notes can be deleted:** a Delete button left of Save while a note
+  is open, confirmed with "Delete This Sticky Note?" (Cancel / Okay).
+- **Start-up fix:** the app waits until every script has loaded before opening
+  the last conversation. Before, a fast start could call into the Summary
+  script before it existed ("updateSummaryToggleIcon is not defined") and
+  skip parts of the first chat's setup.
+- **Error Log:** the Clear log button sits on the title's line, right aligned.
+
 ## 1.10.0 — 2026-10-28
 
 Bookmark fixes, message versions, editing, hiding and sticky notes.

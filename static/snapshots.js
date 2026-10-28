@@ -32,6 +32,9 @@ const SNAPSHOT_CATS = [
   ["links", "Related links"],
   ["model_tags", "Model tags"],
   ["scratch_pads", "Scratch Pads"],
+  ["message_edits", "Message edits"],
+  ["hidden_messages", "Hidden messages"],
+  ["sticky_notes", "Sticky notes"],
 ];
 // Map the per-category counts in a snapshot's summary to a readable Contents cell.
 const SNAPSHOT_CONTENT_PARTS = [
@@ -50,6 +53,9 @@ const SNAPSHOT_CONTENT_PARTS = [
   ["links", "related link", "related links"],
   ["model_tags", "model tag", "model tags"],
   ["scratch_pads", "Scratch Pad", "Scratch Pads"],
+  ["message_edits", "message edit", "message edits"],
+  ["hidden_messages", "hidden message", "hidden messages"],
+  ["sticky_notes", "sticky note", "sticky notes"],
 ];
 let _snapshotMax = 10;
 

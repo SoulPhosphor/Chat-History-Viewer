@@ -402,6 +402,13 @@ def update_note(conn, note_id: str, payload: dict) -> dict:
     return {"note": note}
 
 
+def delete_note(conn, note_id: str) -> dict:
+    _get_note(conn, note_id)
+    conn.execute("DELETE FROM udb.sticky_notes WHERE id = ?", (note_id,))
+    conn.commit()
+    return {"ok": True, "id": note_id}
+
+
 def conversation_extras(conn, conversation_id: str) -> dict:
     """What the conversation view needs, for the whole conversation (the
     header icons count every page, not just the one loaded)."""

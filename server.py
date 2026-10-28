@@ -2110,6 +2110,9 @@ class Handler(BaseHTTPRequestHandler):
             self._api_snapshot_delete(urllib.parse.unquote(path[len("/api/snapshots/"):]))
         elif path.startswith("/api/bookmarks/"):
             self._api_bookmark_delete(urllib.parse.unquote(path[len("/api/bookmarks/"):]))
+        elif path.startswith("/api/sticky-notes/"):
+            note_id = urllib.parse.unquote(path[len("/api/sticky-notes/"):])
+            self._handle_db(lambda conn: message_versions.delete_note(conn, note_id))
         elif path == "/api/related":
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             a = (qs.get("a") or [""])[0]
