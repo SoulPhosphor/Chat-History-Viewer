@@ -1980,6 +1980,7 @@ async function leaveNotesForSpecialView() {
   // Every special view comes through here, so leaving Scratch Pads (and its
   // unsaved-changes check) happens here too.
   if (typeof scratchPadNavigationGuard === "function" && !(await scratchPadNavigationGuard())) return false;
+  if (!(await chatDraftsNavigationGuard())) return false;
   if (typeof notesNavigationGuard !== "function") return true;
   return notesNavigationGuard({ endVisit: true });
 }
@@ -2603,6 +2604,7 @@ function renderConversationPager() {
 
 let conversationPageRequest = 0;
 async function showConversationPage(params) {
+  if (!(await chatDraftsNavigationGuard())) return false;
   const request = ++conversationPageRequest;
   const id = state.activeId;
   const data = await apiConversation(id, params);
@@ -2617,6 +2619,14 @@ async function showConversationPage(params) {
   return true;
 }
 
+// Unsaved sticky note text and message edits sit in the chat itself, so
+// anything that replaces the chat's messages asks about them first.
+async function chatDraftsNavigationGuard() {
+  if (typeof stickyNotesNavigationGuard === "function" && !(await stickyNotesNavigationGuard())) return false;
+  if (typeof messageEditsNavigationGuard === "function" && !(await messageEditsNavigationGuard())) return false;
+  return true;
+}
+
 async function ensureConversationMessage(seq) {
   if (messagesEl.querySelector(`[data-seq="${seq}"]`)) return true;
   return showConversationPage({ target_seq: seq });
@@ -2627,6 +2637,7 @@ async function openConversation(id, clickedEl, targetSeq = null, { keepAdvancedS
   // Advanced Search picks a link for a Scratch Pad stays inside that workspace.
   if (typeof scratchPadNavigationGuard === "function" &&
       !(await scratchPadNavigationGuard({ preview: keepAdvancedSearch }))) return;
+  if (!(await chatDraftsNavigationGuard())) return;
   if (typeof summaryHasUnsavedChanges === "function" && summaryHasUnsavedChanges()) {
     const r = await openSummaryUnsavedModal();
     if (r === "cancel") return;

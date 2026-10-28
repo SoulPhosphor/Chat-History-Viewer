@@ -620,9 +620,9 @@ function beginMessageEdit(slot) {
   syncSave();
   textarea.addEventListener("input", syncSave);
   cancel.addEventListener("click", () => endMessageEdit(slot));
-  save.addEventListener("click", async () => {
+  const doSave = async () => {
     const content = textarea.value;
-    if (!content.trim()) return;
+    if (!content.trim()) return false;
     save.disabled = true;
     let res;
     try {
@@ -633,18 +633,53 @@ function beginMessageEdit(slot) {
       });
     } catch (_) {
       syncSave();
-      return;
+      return false;
     }
     if (!res?.edit) {
       syncSave();
-      return;
+      return false;
     }
     state.messageEdits.set(version.id, res.edit);
     slot.cur = { kind: "edit", i: slot.set.indexOf(version), id: res.edit.id };
     slot.followShown = true;
     endMessageEdit(slot);
-  });
+    return true;
+  };
+  slot.editing.save = doSave;
+  save.addEventListener("click", doSave);
 }
+
+function messageEditIsDirty(slot) {
+  const editing = slot.editing;
+  if (!editing) return false;
+  const edit = state.messageEdits.get(editing.version.id);
+  return editing.textarea.value !== (edit ? edit.content : editing.version.content);
+}
+
+function openMessageEdits() {
+  return [...(messagesEl?.querySelectorAll(":scope > .message") || [])]
+    .map((div) => div._mv)
+    .filter((slot) => slot && messageEditIsDirty(slot));
+}
+
+// Before the chat's messages are replaced: an unsaved edit asks first (Save
+// or Cancel), the same prompt as Summaries. Resolves false on Cancel.
+async function messageEditsNavigationGuard() {
+  for (const slot of openMessageEdits()) {
+    slot.div.scrollIntoView({ block: "center", behavior: preferredScrollBehavior() });
+    const result = await openSummaryUnsavedModal();
+    if (result === "cancel") return false;
+    if (!(await slot.editing.save())) return false;
+  }
+  return true;
+}
+
+window.addEventListener("beforeunload", (event) => {
+  if (openMessageEdits().length) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
 
 function endMessageEdit(slot) {
   if (!slot.editing) return;

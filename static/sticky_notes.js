@@ -447,6 +447,31 @@ async function closeStickyNoteSection(id) {
   }
 }
 
+// Before the chat's messages are replaced (another chat, another page or
+// screen): unsaved note text asks first, with the same prompt as closing.
+// Resolves false when the user cancels.
+async function stickyNotesNavigationGuard() {
+  for (const open of [..._stickyEditors.values()]) {
+    if (!open.section.isConnected || !stickyIsDirty(open)) continue;
+    open.section.scrollIntoView({ block: "center", behavior: preferredScrollBehavior() });
+    const result = await openSummaryUnsavedModal();
+    if (result === "cancel") return false;
+    if (!(await saveStickyBody(open))) return false;
+  }
+  return true;
+}
+
+function stickyNotesHaveUnsavedChanges() {
+  return [..._stickyEditors.values()].some((open) => open.section.isConnected && stickyIsDirty(open));
+}
+
+window.addEventListener("beforeunload", (event) => {
+  if (stickyNotesHaveUnsavedChanges()) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
+
 // ── Create (⋮ → Create Sticky Note) ──────────────────────────────────────────
 // Opens the note under the message with the cursor in its title. A message
 // that already has its note opens that one.
