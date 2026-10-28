@@ -217,6 +217,7 @@ class MessageVersionTests(unittest.TestCase):
         from http.server import ThreadingHTTPServer
         note = message_versions.create_note(self.conn, {"conversation_id": "c1", "seq": 1})["note"]
         message_versions.update_note(self.conn, note["id"], {"title": "Pelican", "body": "about birds"})
+        old_paths = (server.Handler.db_path, server.Handler.source_dir)
         server.Handler.db_path = self.db
         server.Handler.source_dir = self.source
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
@@ -244,6 +245,7 @@ class MessageVersionTests(unittest.TestCase):
         finally:
             httpd.shutdown()
             httpd.server_close()
+            server.Handler.db_path, server.Handler.source_dir = old_paths
 
     def test_permanent_delete_removes_them(self):
         for table in ("message_edits", "hidden_messages", "sticky_notes"):

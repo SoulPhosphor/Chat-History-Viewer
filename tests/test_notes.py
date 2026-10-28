@@ -149,7 +149,7 @@ class NotesUiContractTests(unittest.TestCase):
         self.assertIn("_notesVisit.baseline = { ...openingValues }", NOTES_JS)
 
     def test_canceled_history_navigation_restores_the_conversation_entry(self):
-        self.assertIn("_gbRestoringCanceledPopstate", BOOKMARKS_HUB_JS)
+        self.assertIn("restoringCanceledPopstate = true", BOOKMARKS_HUB_JS)
         self.assertIn("_auditRestoringCanceledPopstate", APP_JS)
         self.assertIn("history.forward()", BOOKMARKS_HUB_JS)
 
