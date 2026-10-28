@@ -175,6 +175,7 @@ No body.
 | `/api/labels/<id>` | — | `{ok}` |
 | `/api/snapshots/<id>` | — | `{ok}` |
 | `/api/bookmarks/<id>` | — | `{ok}` |
+| `/api/sticky-notes/<id>` | — | `{ok, id}` |
 | `/api/related` | `a, b` | `{ok}` |
 | `/api/advanced-search/saved/<id>` | — | `{ok}` |
 | `/api/scratchpads/<id>` | — | `{ok}` |

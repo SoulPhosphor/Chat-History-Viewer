@@ -61,6 +61,12 @@ function apiCreateStickyNote(seq) {
     action: "Create sticky note",
   });
 }
+function apiDeleteStickyNote(id) {
+  return apiRequest(`/api/sticky-notes/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    action: "Delete sticky note",
+  });
+}
 function apiUpdateStickyNote(id, body) {
   return apiRequest(`/api/sticky-notes/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -295,16 +301,20 @@ function buildStickyNoteSection(note, div) {
   revert.type = "button";
   revert.className = "summary-btn";
   revert.textContent = "Revert";
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "summary-btn";
+  del.textContent = "Delete";
   const save = document.createElement("button");
   save.type = "button";
   save.className = "summary-btn summary-btn-primary";
   save.textContent = "Save";
-  actions.append(status, revert, save);
+  actions.append(status, revert, del, save);
   editorEl.append(toolbar, visual, input, actions);
   section.append(head, editorEl);
   div.appendChild(section);
 
-  const open = { note, section, titleInput, toolbar, actions, status, revert, save, input, visual, saved: note.body || "", saving: null };
+  const open = { note, section, titleInput, toolbar, actions, status, revert, del, save, input, visual, saved: note.body || "", saving: null };
   const linkButton = toolbar.querySelector('[data-format="link"]');
   open.ed = createVisualEditor({
     visual,
@@ -334,7 +344,11 @@ function buildStickyNoteSection(note, div) {
   open.syncEditing = () => {
     const active = editing() || !toolbar.querySelector(".summary-highlight-menu").hidden;
     toolbar.hidden = !active;
-    actions.hidden = !active && !stickyIsDirty(open) && !status.textContent;
+    // Delete shows whenever the note is open; Revert and Save while it is
+    // being edited or has unsaved changes.
+    const editingRow = active || stickyIsDirty(open) || !!status.textContent;
+    revert.hidden = !editingRow;
+    save.hidden = !editingRow;
   };
   section.addEventListener("focusin", () => open.syncEditing());
   section.addEventListener("focusout", () => setTimeout(() => open.syncEditing(), 0));
@@ -373,6 +387,7 @@ function buildStickyNoteSection(note, div) {
     syncStickyEditor(open);
   });
   save.addEventListener("click", () => saveStickyBody(open));
+  del.addEventListener("click", () => deleteStickyNote(note.id));
   return open;
 }
 
@@ -471,6 +486,25 @@ window.addEventListener("beforeunload", (event) => {
     event.returnValue = "";
   }
 });
+
+// ── Delete ───────────────────────────────────────────────────────────────────
+async function deleteStickyNote(id) {
+  const ok = await openConfirm({ title: "Delete This Sticky Note?", text: "", okLabel: "Okay" });
+  if (!ok) return;
+  try {
+    await apiDeleteStickyNote(id);
+  } catch (_) {
+    return;
+  }
+  const note = stickyNoteById(id);
+  const open = _stickyEditors.get(id);
+  _openStickyNotes.delete(id);
+  _stickyEditors.delete(id);
+  open?.section.remove();
+  state.stickyNotes = state.stickyNotes.filter((n) => n.id !== id);
+  if (note) syncMessageStickyDom(note.seq);
+  refreshStickySurfaces();
+}
 
 // ── Create (⋮ → Create Sticky Note) ──────────────────────────────────────────
 // Opens the note under the message with the cursor in its title. A message

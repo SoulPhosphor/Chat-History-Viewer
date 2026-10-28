@@ -2733,7 +2733,8 @@ kbd {
   color: var(--sticky-note-icon-color);
 }
 .sticky-note-editor .summary-toolbar[hidden],
-.sticky-note-actions[hidden] {
+.sticky-note-actions[hidden],
+.sticky-note-actions .summary-btn[hidden] {
   display: none;
 }
 .sticky-note-visual {
