@@ -690,7 +690,7 @@ reliable IDs. Follow the [API checklist](#phase-7--the-api-checklist) and the
       planning only; no code and no release.)
 - [ ] **User answers the open questions** (D1–D11 in the Phase 7 plan).
 - [ ] **Foundation, no product decisions needed:** key reading, optional
-      SDK, run records and provenance tables (userdata change 5), context
+      SDK, run records and provenance tables (userdata change 6), context
       builder, token estimator, metadata-only request log, AI job kind, all
       tested with a fake client. (Session 12, plan step 1)
 - [ ] **First AI task on one chat**, with estimate, confirmation, progress,
@@ -1571,7 +1571,7 @@ text that the app saves into an allowed field.
 | Long work with progress and Cancel | `background_jobs.start(db, kind, callback)`, `Job.progress`, `Job.check`, `Job.batch`, `/api/jobs/<id>`, `/api/jobs/<id>/cancel` | An AI run is a job of kind `ai`. Progress counts chats. Cancel stops between chats. No second lock or worker. |
 | One job at a time | The OS lock in `background_jobs.hold` | An AI run blocks imports while it runs, and the other way round. Message Batches can take up to 24 hours, so a batch run must **not** hold the lock while it waits (see step 3). |
 | Backups | `backups.backup_all(db, reason)` | Every AI job backs up first, like imports (`reason="ai-run"`). |
-| Database changes | `schema_changes.apply_steps` with `USERDATA_SCHEMA_STEPS` | New tables are userdata change 5, appended, with the automatic backup. history.db stays at 6. |
+| Database changes | `schema_changes.apply_steps` with `USERDATA_SCHEMA_STEPS` | New tables are userdata change 6, appended, with the automatic backup. history.db stays at 6. |
 | Permanent delete covers new tables | `conversation_tables.USERDATA_TABLES` | Every new AI table with a `conversation_id` joins this list. |
 | No silent overwrite | `version` on notes and summaries, `_base_version`, `_check_version` (409) | The run reads the field's version when it starts and saves with that `base_version`. If the user edited the field during the run, the save is refused and the result is kept as unsaved (see D4). |
 | Who wrote a summary | `condensed_author` / `summary_author` = `personal`, `ai`, `collaborative` | AI saves use author `ai`; the existing colours and "collaborative" logic stay as they are. |
@@ -1630,7 +1630,7 @@ tokens, standard (not batch) rates.
 5. **Finish:** the job result lists saved, refused (version conflict), cut off,
    declined and failed chats, and the total tokens.
 
-### New data (userdata change 5, planned; names may change in session 12)
+### New data (userdata change 6, planned; names may change in session 12)
 
 - `ai_runs`: run ID (the job ID), task, provider, model, settings used,
   created/finished time, status, estimated and actual input/output/cache
@@ -1887,6 +1887,22 @@ app. **Fix in session 12:** move the workflow to a supported Node version
 
 ---
 
+### Feature work between sessions 11 and 12 (version 1.10.0)
+
+Not part of the repair plan; done at the user's request. Later sessions need:
+
+- **userdata change 5 is taken** by `message_edits`, `hidden_messages` and
+  `sticky_notes` (`message_versions.py`). The AI tables become change 6.
+- Every message version (reroll) has a fixed id: `uuid` (and `asst_uuid` for
+  the reply kept with another prompt wording) in `messages.siblings`, filled
+  for older imports by `message_ids.fill_missing_from_sources`. Use
+  `message_versions.conversation_versions` / `locate_item` to find one.
+- The user's edit of a message is separate from the imported text. Anything
+  that reads "the message" for the user (the AI context builder included) must
+  decide whether it reads the original or the edit; ask the user.
+- Version switching lives in `static/message_versions.js` (the old inline
+  branch code in `app.js` is gone); sticky notes in `static/sticky_notes.js`.
+
 # Next session prompt
 
 **Next: session 12 — Phase 7 step 1, the AI foundation.**
@@ -1919,7 +1935,7 @@ Step 1: fix #41 first (move the test workflow off Node 20). Read the anthropic
 2.0.0 changelog and pin one exact SDK version as an optional dependency; the
 app must start and work without it. Read the key only on the server, from
 ANTHROPIC_API_KEY or .env, and add GET /api/ai/status returning only
-{sdk_installed, key_set}. Add userdata change 5 (ai_runs, ai_outputs) as a
+{sdk_installed, key_set}. Add userdata change 6 (ai_runs, ai_outputs) as a
 numbered step with the automatic backup, and add the new tables to
 conversation_tables. Build the context builder (one chat's messages by ID
 from the database, all pages, visible branch and full tree, with counts),
@@ -1931,7 +1947,7 @@ chats, usage records and every stop_reason. Add tests proving the key never
 appears in a reply, receipt, preference, database or log. No new screens or
 CSS. Update ENDPOINTS.md.
 
-Current schema versions are history 6 and userdata 4. Run the full tests and
+Current schema versions are history 6 and userdata 5. Run the full tests and
 python scripts/check_styles.py. Bump the version and CHANGELOG for the code
 change. Update AUDIT.md (tick step 1, session table, session 12 notes, next
 prompt). Use one pull request. It changes code, so comment @codex review,
