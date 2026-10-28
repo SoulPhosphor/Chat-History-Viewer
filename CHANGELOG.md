@@ -13,6 +13,7 @@ newest first.
   the last conversation. Before, a fast start could call into the Summary
   script before it existed ("updateSummaryToggleIcon is not defined") and
   skip parts of the first chat's setup.
+- **Error Log:** the Clear log button sits on the title's line, right aligned.
 
 ## 1.10.0 — 2026-10-28
 

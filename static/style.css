@@ -5957,8 +5957,9 @@ body.resizing-rows { cursor: row-resize; user-select: none; }
 .error-log-btn:disabled {
   cursor: default;
 }
+/* Clear log sits on the title's line, right aligned. */
 #error-log-clear-btn {
-  margin-left: var(--space-10px);
+  margin-left: auto;
   flex-shrink: 0;
 }
 .error-log-empty {
