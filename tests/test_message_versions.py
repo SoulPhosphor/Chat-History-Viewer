@@ -210,6 +210,43 @@ class MessageVersionTests(unittest.TestCase):
         self.assertEqual(extras["hidden_items"], ["a0b"])
         self.assertEqual([n["id"] for n in extras["sticky_notes"]], [note["id"]])
 
+    def test_global_message_sticky_notes_list(self):
+        import http.client
+        import threading
+        import urllib.parse
+        from http.server import ThreadingHTTPServer
+        note = message_versions.create_note(self.conn, {"conversation_id": "c1", "seq": 1})["note"]
+        message_versions.update_note(self.conn, note["id"], {"title": "Pelican", "body": "about birds"})
+        old_paths = (server.Handler.db_path, server.Handler.source_dir)
+        server.Handler.db_path = self.db
+        server.Handler.source_dir = self.source
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        port = httpd.server_address[1]
+
+        def get(**params):
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+            conn.request("GET", "/api/global-sticky-notes?" + urllib.parse.urlencode(params),
+                         headers={"Host": f"127.0.0.1:{port}"})
+            resp = conn.getresponse()
+            body = json.loads(resp.read())
+            conn.close()
+            self.assertEqual(resp.status, 200, body)
+            return body
+        try:
+            listed = get(provider="claude")
+            self.assertEqual(listed["total"], 1)
+            notes = listed["conversations"][0]["sticky_notes"]
+            self.assertEqual([(n["id"], n["title"], n["seq"], n["missing"]) for n in notes],
+                             [(note["id"], "Pelican", 1, False)])
+            self.assertEqual(get(provider="claude", q="birds", scope="sticky_notes")["total"], 1)
+            self.assertEqual(get(provider="claude", q="birds", scope="titles")["total"], 0)
+            self.assertEqual(get(provider="chatgpt")["total"], 0)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            server.Handler.db_path, server.Handler.source_dir = old_paths
+
     def test_permanent_delete_removes_them(self):
         for table in ("message_edits", "hidden_messages", "sticky_notes"):
             self.assertIn((table, "conversation_id", None), conversation_tables.USERDATA_TABLES)

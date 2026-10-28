@@ -81,6 +81,7 @@ All three file routes send `X-Content-Type-Options: nosniff`.
 | `/api/notes/<conv_id>` | — | `{conversation_id, user_notes, notes_to_ai, notes_from_ai, version, ...}` |
 | `/api/bookmarks/<conv_id>` | — | `{conversation_id, bookmarks: [...]}` |
 | `/api/global-bookmarks` | `q, scope, sort, provider, limit, offset` | `{conversations: [...], total}` |
+| `/api/global-sticky-notes` | `q, scope (titles / sticky_notes / both), sort, provider, limit, offset` | `{conversations: [{..., sticky_notes: [{id, seq, title, message_uuid, missing}]}], total}` |
 | `/api/preferences` | — | `{preferences: {key: value}}`, without keys the app keeps for itself (`dataset_format`) |
 | `/api/pinned` | `provider` | `{pinned: [...]}` |
 | `/api/tabs` | — | `{tabs: [...]}` |
